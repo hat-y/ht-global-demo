@@ -1,0 +1,28 @@
+<template>
+    <template lwc:if={loading}>
+        <div class="slds-is-relative slds-p-around_large">
+            <lightning-spinner alternative-text="Loading conversation" size="small"></lightning-spinner>
+        </div>
+    </template>
+    <template lwc:elseif={hasError}>
+        <div class="slds-box slds-box_x-small slds-theme_error slds-text-align_center">
+            The conversation for this quote could not be loaded.
+        </div>
+    </template>
+    <template lwc:elseif={noConversation}>
+        <div class="slds-box slds-box_x-small slds-theme_shade slds-text-color_weak slds-text-align_center">
+            <lightning-icon icon-name="utility:chat" size="small" class="slds-m-right_x-small"></lightning-icon>
+            This quote has no linked conversation yet.
+        </div>
+    </template>
+    <template lwc:else>
+        <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-p-bottom_x-small">
+            <span class="slds-text-color_weak slds-text-body_small">{summary} (customer-visible)</span>
+            <span>
+                <lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh" variant="border-filled" size="small" onclick={handleRefresh} class="slds-m-right_x-small"></lightning-button-icon>
+                <lightning-button label="Open in Sellium Console" icon-name="utility:new_window" onclick={openConsole}></lightning-button>
+            </span>
+        </div>
+        <c-conversation-thread conversation-id={conversationId}></c-conversation-thread>
+    </template>
+</template>

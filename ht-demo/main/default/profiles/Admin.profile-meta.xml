@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Profile xmlns="http://soap.sforce.com/2006/04/metadata">
+    <!-- Sellium-only scope (S9): the Revio app stays installed but is hidden from the System Administrator App Launcher.
+         UNDO: set <visible>true</visible> for Conversation_Campaigns and redeploy this file:
+         sf project deploy start -o ht-global -d ht-demo/main/default/profiles/Admin.profile-meta.xml -->
+    <applicationVisibilities>
+        <application>Conversation_Campaigns</application>
+        <default>false</default>
+        <visible>false</visible>
+    </applicationVisibilities>
+    <applicationVisibilities>
+        <application>Conversation_Console</application>
+        <default>true</default>
+        <visible>true</visible>
+    </applicationVisibilities>
+</Profile>

@@ -1,0 +1,47 @@
+name: Deploy HT Global website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'deploy/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run tests
+        run: cd website && node --test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-vm
+      cancel-in-progress: false
+    steps:
+      - name: Deploy on the VM
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ubuntu
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: /home/ubuntu/ht-global/repo/deploy/deploy.sh
+      - name: Smoke test
+        run: |
+          for i in 1 2 3 4 5; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://htglobal.vantegrateos.com/api/health || true)
+            [ "$code" = 200 ] && { echo "health 200"; exit 0; }
+            echo "attempt $i: HTTP $code"; sleep 5
+          done
+          exit 1

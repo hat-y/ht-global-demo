@@ -1,0 +1,15 @@
+{
+  "name": "ht-global-circuits-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HT Global Circuits demo website for VAI-181",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

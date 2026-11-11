@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomApplication xmlns="http://soap.sforce.com/2006/04/metadata">
+    <brand>
+        <headerColor>#044E72</headerColor>
+        <logo>HTGlobalAppLogo</logo>
+        <logoVersion>1</logoVersion>
+        <shouldOverrideOrgTheme>true</shouldOverrideOrgTheme>
+    </brand>
+    <description>HT Global Circuits demo — Revio Console with Conversations inbox, campaigns, and PCB quotes.</description>
+    <formFactors>Small</formFactors>
+    <formFactors>Large</formFactors>
+    <isNavAutoTempTabsDisabled>false</isNavAutoTempTabsDisabled>
+    <isNavPersonalizationDisabled>false</isNavPersonalizationDisabled>
+    <isNavTabPersistenceDisabled>false</isNavTabPersistenceDisabled>
+    <isOmniPinnedViewEnabled>false</isOmniPinnedViewEnabled>
+    <label>Revio Console</label>
+    <navType>Standard</navType>
+    <tabs>Conversation_Home</tabs>
+    <tabs>Conversation_Console</tabs>
+    <tabs>Conversation_Campaigns</tabs>
+    <tabs>ConversationRedemption__c</tabs>
+    <tabs>Conversation_Audiences</tabs>
+    <tabs>Conversation_Automations</tabs>
+    <tabs>Conversation_Template_Assistant</tabs>
+    <tabs>ConversationOptOut__c</tabs>
+    <tabs>Conversation_Campaigns_Setup</tabs>
+    <tabs>standard-report</tabs>
+    <uiType>Lightning</uiType>
+</CustomApplication>

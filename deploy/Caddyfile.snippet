@@ -1,0 +1,14 @@
+# Site block for the HT Global demo website.
+#
+# Append it to /opt/platform/Caddyfile on the OCI VM (never overwrite the file):
+#   sudo cp /opt/platform/Caddyfile /opt/platform/Caddyfile.bak.$(date +%Y%m%d-%H%M%S)
+#   cat deploy/Caddyfile.snippet | sudo tee -a /opt/platform/Caddyfile >/dev/null
+#   docker exec platform-caddy-1 caddy validate --config /etc/caddy/Caddyfile
+#   docker exec platform-caddy-1 caddy reload   --config /etc/caddy/Caddyfile
+# If validate fails, restore the backup and do not reload.
+# Prerequisites: DNS A record htglobal.vantegrateos.com -> <vm-ip>, and the
+# ht-global-web container running on the vantegrate_default network.
+htglobal.vantegrateos.com {
+	encode zstd gzip
+	reverse_proxy ht-global-web:4173
+}

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtlClntAppGlobalOauthSettings xmlns="http://soap.sforce.com/2006/04/metadata">
+    <callbackUrl>https://n8n.example.com/oauth/callback</callbackUrl>
+    <certificate>MIIDPDCCAiSgAwIBAgIUeu7XS9B2Zg+7RQTMfmDP8juqyzIwDQYJKoZIhvcNAQELBQAwPjEiMCAGA1UEAwwZSFQgR2xvYmFsIE44TiBJbnRlZ3JhdGlvbjEYMBYGA1UECgwPR3J1cHBlIEhlaW5sZWluMB4XDTI2MTExMTE5MzIxM1oXDTI4MTExMDE5MzIxM1owPjEiMCAGA1UEAwwZSFQgR2xvYmFsIE44TiBJbnRlZ3JhdGlvbjEYMBYGA1UECgwPR3J1cHBlIEhlaW5sZWluMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsyNcSckacckHIKI4l0YdM/Se4f7dFfvhdt7brFI0Ws2ZhrMgR29xDrRRvPF0i4PINazNHIHHtjagj6urnMwnjQhLmlw5FjEEnELHt98syudMpecpz3XmELNxca13Msx0ovNBY8Srs3VNy3WT/cGsCZVX9LVBl+clqTjhe0OcYuzBYKEXQlcwfllB66FZYhV6uxr/ROqdNpdj4/BPFySqXYLgSV6xx1sDDQXzmmghggXXXsNdCU8tV5j+XvNNaLZrnCXPpMhUEc4cbL6Z6q2aRk8cyJeJ8M740tcDLFsJF6ayyS7I+NhtcuXxV4G+LycagXhnJwO/wi1OSjI+s4SfywIDAQABozIwMDAdBgNVHQ4EFgQUz2t/g5SAKiIvTNbJHhSwM7a7q40wDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAhhPvyQZXvh2xTtNGlMKjy9+Z3LJFb7FJegMuabgDz67KFX1d5b4m5lTsFcGtw7Hm7T7Q5SQYmwBw2ghTOL3rKFsa3BGEGv0iHIaFI5+nruFhtP8onNhuahMMT0TLJCmyxheUUf4Nx0KZ0AlGq16F+hyzi2n3+I1HhBnS9jgZUmXaL34+m/3Lx6W2BNqQIlK0i+YcRbTV5uMNzqN7Z/nks/RbEZHklwCY1e1S4uiyfKnWl+epjDQmQV0D52X14YT6Thj1+x3H/tlidnnh8q6Az5M9voH0Xpo/PRepKMhkCCWhpHlK9p+r+9RvEctb8mn1y3mmBb6OCX3s0ZZ0glrsKQ==</certificate>
+    <externalClientApplication>HT_Global_N8N_Integration</externalClientApplication>
+    <isClientCredentialsFlowEnabled>false</isClientCredentialsFlowEnabled>
+    <isCodeCredFlowEnabled>false</isCodeCredFlowEnabled>
+    <isCodeCredPostOnly>false</isCodeCredPostOnly>
+    <isConsumerSecretOptional>false</isConsumerSecretOptional>
+    <isDPopEnabled>false</isDPopEnabled>
+    <isDeviceFlowEnabled>false</isDeviceFlowEnabled>
+    <isEnforceRefreshTokenTTL>false</isEnforceRefreshTokenTTL>
+    <isIntrospectAllTokens>false</isIntrospectAllTokens>
+    <isNamedUserJwtEnabled>true</isNamedUserJwtEnabled>
+    <isPkceRequired>false</isPkceRequired>
+    <isRefreshTokenRotationEnabled>false</isRefreshTokenRotationEnabled>
+    <isSecretRequiredForRefreshToken>true</isSecretRequiredForRefreshToken>
+    <isSecretRequiredForTokenExchange>true</isSecretRequiredForTokenExchange>
+    <isTokenExchangeEnabled>false</isTokenExchangeEnabled>
+    <label>HT_Global_N8N_Integration_glbloauth</label>
+    <shouldRotateConsumerKey>false</shouldRotateConsumerKey>
+    <shouldRotateConsumerSecret>false</shouldRotateConsumerSecret>
+</ExtlClntAppGlobalOauthSettings>

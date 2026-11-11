@@ -1,0 +1,38 @@
+# Runs on the OCI VM from /home/ubuntu/ht-global/repo:
+#   docker compose -f deploy/docker-compose.yml up -d --build
+services:
+  ht-global-web:
+    container_name: ht-global-web
+    image: ht-global-web:latest
+    build:
+      context: ../website
+    restart: unless-stopped
+    env_file: /home/ubuntu/ht-global/web.env
+    environment:
+      SF_AUTH: jwt
+      SF_JWT_DIR: /run/secrets/ht
+      TRUST_PROXY: "1"
+      PORT: "4173"
+      NODE_ENV: production
+    volumes:
+      - /home/ubuntu/ht-global/secrets:/run/secrets/ht:ro
+    # No published ports: only Caddy reaches it, over the shared Docker network.
+    networks:
+      - vantegrate_default
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  vantegrate_default:
+    external: true

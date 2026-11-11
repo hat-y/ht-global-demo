@@ -1,0 +1,16 @@
+/* Hide standard Lightning App Page header (tab title row) for HT Global demo. */
+app_flexipage-header,
+[app_flexipage-header_header-host],
+header.flexipageHeader,
+.oneAnchorHeader,
+.slds-page-header.flexipageHeader,
+.flexipageHeader,
+.slds-page-header.uiBlock.oneAnchorHeader {
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border: 0 !important;
+}

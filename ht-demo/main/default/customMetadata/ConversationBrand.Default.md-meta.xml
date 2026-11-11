@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+    <label>Default</label>
+    <protected>false</protected>
+    <values>
+        <field>BrandName__c</field>
+        <value xsi:type="xsd:string">HT Global Circuits</value>
+    </values>
+    <values>
+        <field>WebsiteUrl__c</field>
+        <value xsi:type="xsd:string">https://htglobalcircuits.com</value>
+    </values>
+    <values>
+        <field>LogoUrl__c</field>
+        <value xsi:type="xsd:string">__HT_LOGO_PUBLIC_URL__</value>
+    </values>
+    <values>
+        <field>LogoAssetKey__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
+        <field>PrimaryColor__c</field>
+        <value xsi:type="xsd:string">#044E72</value>
+    </values>
+    <values>
+        <field>SecondaryColor__c</field>
+        <value xsi:type="xsd:string">#F3E31C</value>
+    </values>
+    <values>
+        <field>VisualStyle__c</field>
+        <value xsi:type="xsd:string">Clean industrial electronics; yellow circuit mark on deep teal</value>
+    </values>
+    <values>
+        <field>Tone__c</field>
+        <value xsi:type="xsd:string">Professional, precise, helpful</value>
+    </values>
+    <values>
+        <field>PostalAddress__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
+        <field>LegalFooter__c</field>
+        <value xsi:nil="true"/>
+    </values>
+    <values>
+        <field>EmailFromName__c</field>
+        <value xsi:type="xsd:string">HT Global Circuits</value>
+    </values>
+</CustomMetadata>
