@@ -49,7 +49,8 @@
         var parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
           var st = Object.assign(freshState(), parsed);
-          if (typeof parsed.intro !== 'number') st.intro = 3; // session from before the intro existed: never replay it
+          // Session from before the intro existed: replay it only when no quote was started yet.
+          if (typeof parsed.intro !== 'number') st.intro = parsed.quoteId ? 3 : 0;
           return st;
         }
       }
@@ -163,10 +164,12 @@
   var ASSISTANT = 'HT Global assistant';
   var INTRO = [
     'Hi! I\u2019m the HT Global quote assistant.',
-    'First, I\u2019ll show you a short form for your contact and board details. Once it\u2019s sent, we can chat about anything else your PCB needs, like finish, stack-up or delivery.'
+    'To get your quote started, please fill out the short form I\u2019m about to show you with your contact and board details. Once you send it, we can chat about anything else your PCB needs, like finish, stack-up or delivery.'
   ];
-  // Typing pause before each intro step: hello, explainer, form card. Long enough to read as the assistant writing.
-  var INTRO_TYPING_MS = [900, 1600, 1200];
+  // Typing pause before each intro step: hello, explainer, form card. The assistant "writes" first, so the
+  // visitor never gets everything at once. Pacing is content timing, not motion: it also applies with
+  // prefers-reduced-motion (only the slide-in animation is dropped there).
+  var INTRO_TYPING_MS = [1300, 2200, 1800];
   function prompts(step) {
     var first = (S.draft.name || '').trim().split(/\s+/)[0];
     if (step === 2) return 'Thanks' + (first ? ', ' + first : '') + '. What kind of board do you need?';
@@ -207,8 +210,7 @@
   function runIntro() {
     clearTimeout(introTimer);
     introTimer = null;
-    var instant = reducedMotion();
-    if (!instant) { typing.hidden = false; scrollDown(); }
+    typing.hidden = false; scrollDown();
     var run = function () {
       introTimer = null;
       typing.hidden = true;
@@ -223,13 +225,13 @@
       } else if (S.intro === 2) {
         S.intro = 3; save();
         var card = buildCard(S.step);
-        if (!instant) card.classList.add('htcw-card-in');
+        if (!reducedMotion()) card.classList.add('htcw-card-in');
         log.appendChild(card);
         scrollDown();
         if (isOpen && menu.hidden) focusFirstIn(card);
       }
     };
-    if (instant) run(); else introTimer = setTimeout(run, INTRO_TYPING_MS[S.intro]);
+    introTimer = setTimeout(run, INTRO_TYPING_MS[S.intro]);
   }
 
   var uid = 0;
