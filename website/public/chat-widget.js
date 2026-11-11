@@ -297,7 +297,7 @@
     } else if (step === 2) {
       addChips(chips('boardType', 'Board type', BOARD_TYPES.map(function (b) { return [b, b]; })));
       add(field({ name: 'layers', label: 'Layers', kind: 'select', options: LAYERS.map(function (l) { return [l, l]; }) }));
-      add(field({ name: 'quantity', label: 'Quantity', type: 'number', min: '1', step: '1', inputmode: 'numeric', placeholder: 'e.g. 100' }));
+      add(field({ name: 'quantity', label: 'Quantity', required: true, type: 'number', min: '1', step: '1', inputmode: 'numeric', placeholder: 'e.g. 100' }));
     } else {
       add(field({ name: 'width', label: 'Width', type: 'number', min: '0', step: 'any', inputmode: 'decimal' }));
       add(field({ name: 'length', label: 'Length', type: 'number', min: '0', step: 'any', inputmode: 'decimal' }));
@@ -348,7 +348,10 @@
           if (!v) bad(f, 'Please enter your email address.');
           else if (!EMAIL_RE.test(v)) bad(f, 'That email doesn\u2019t look right. Use a format like name@company.com.');
         }
-        if (f.name === 'quantity' && v && !(Number(v) >= 1 && isFinite(Number(v)))) bad(f, 'Enter a quantity of 1 or more.');
+        if (f.name === 'quantity') {
+          if (!v) bad(f, 'Please enter a quantity.');
+          else if (!(Number(v) >= 1 && isFinite(Number(v)))) bad(f, 'Enter a quantity of 1 or more.');
+        }
         if ((f.name === 'width' || f.name === 'length') && v && !(Number(v) > 0 && isFinite(Number(v)))) bad(f, 'Enter a size greater than 0.');
       });
       if (firstBad) firstBad.focus();

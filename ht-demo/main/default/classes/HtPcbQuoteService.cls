@@ -3,6 +3,9 @@
  * Implements a form-then-chat quote pattern on top of Conversation__c.
  */
 public with sharing class HtPcbQuoteService {
+    /** Plain exception: AuraHandledException hides its message ('Script-thrown exception') outside Aura. */
+    public class HtPcbQuoteException extends Exception {}
+
     public class QuoteRequest {
         public String name;
         public String company;
@@ -33,12 +36,15 @@ public with sharing class HtPcbQuoteService {
             Contact contact = upsertContact(req, account.Id);
             Opportunity opportunity = createOpportunity(req, account.Id, contact.Id);
             Quote quote = createQuote(req, opportunity.Id, contact.Id);
+            createPcbLineItem(quote);
             Conversation__c conversation = createConversation(req, contact);
+            createOpportunityContactRole(opportunity.Id, contact.Id);
             createInboundMessage(conversation.Id, buildFormSummary(req), req.name);
             if (String.isNotBlank(req.message)) {
                 createInboundMessage(conversation.Id, req.message, req.name);
             }
             linkConversationToQuote(conversation.Id, quote.Id, account.Id);
+            linkConversationToContact(conversation.Id, contact, account.Id);
             quote.PCB_Conversation_Id__c = conversation.Id;
             update quote;
 
@@ -63,10 +69,10 @@ public with sharing class HtPcbQuoteService {
         Savepoint sp = Database.setSavepoint();
         try {
             if (String.isBlank(req.conversationId)) {
-                throw new AuraHandledException('conversationId is required');
+                throw new HtPcbQuoteException('conversationId is required');
             }
             if (String.isBlank(req.message)) {
-                throw new AuraHandledException('message is required');
+                throw new HtPcbQuoteException('message is required');
             }
 
             Conversation__c conversation = [
@@ -76,7 +82,7 @@ public with sharing class HtPcbQuoteService {
                 LIMIT 1
             ];
             if (conversation.IsClosed__c == true) {
-                throw new AuraHandledException('Conversation is closed');
+                throw new HtPcbQuoteException('Conversation is closed');
             }
 
             createInboundMessage(conversation.Id, req.message, conversation.DisplayName__c);
@@ -184,19 +190,25 @@ public with sharing class HtPcbQuoteService {
 
     private static void validateStart(QuoteRequest req) {
         if (req == null) {
-            throw new AuraHandledException('Request body is required');
+            throw new HtPcbQuoteException('Request body is required');
         }
         if (String.isBlank(req.name)) {
-            throw new AuraHandledException('name is required');
+            throw new HtPcbQuoteException('name is required');
         }
         if (String.isBlank(req.company)) {
-            throw new AuraHandledException('company is required');
+            throw new HtPcbQuoteException('company is required');
         }
         if (String.isBlank(req.email) || !req.email.contains('@')) {
-            throw new AuraHandledException('A valid email is required');
+            throw new HtPcbQuoteException('A valid email is required');
+        }
+        if (req.quantity == null || req.quantity < 1) {
+            throw new HtPcbQuoteException('Quantity is required.');
         }
     }
 
+    /**
+     * Matches by name. An existing account is never overwritten: only a blank phone may be filled.
+     */
     private static Account upsertAccount(QuoteRequest req) {
         List<Account> existing = [
             SELECT Id, Name, Phone
@@ -204,14 +216,23 @@ public with sharing class HtPcbQuoteService {
             WHERE Name = :req.company
             LIMIT 1
         ];
-        Account account = existing.isEmpty() ? new Account(Name = req.company) : existing[0];
-        if (String.isNotBlank(req.phone)) {
-            account.Phone = req.phone;
+        if (existing.isEmpty()) {
+            Account created = new Account(Name = req.company, Phone = blankToNull(req.phone));
+            insert created;
+            return created;
         }
-        upsert account;
+        Account account = existing[0];
+        if (String.isBlank(account.Phone) && String.isNotBlank(req.phone)) {
+            account.Phone = req.phone;
+            update account;
+        }
         return account;
     }
 
+    /**
+     * Matches by email. An existing contact keeps its name, phone and account: only blank phone or
+     * blank account may be filled.
+     */
     private static Contact upsertContact(QuoteRequest req, Id accountId) {
         List<Contact> existing = [
             SELECT Id, FirstName, LastName, Email, Phone, AccountId
@@ -219,13 +240,31 @@ public with sharing class HtPcbQuoteService {
             WHERE Email = :req.email
             LIMIT 1
         ];
-        Contact contact = existing.isEmpty() ? new Contact(Email = req.email) : existing[0];
-        contact.AccountId = accountId;
-        contact.Phone = req.phone;
-        List<String> parts = req.name.trim().split('\\s+', 2);
-        contact.FirstName = parts.size() > 1 ? parts[0] : null;
-        contact.LastName = parts.size() > 1 ? parts[1] : parts[0];
-        upsert contact;
+        if (existing.isEmpty()) {
+            List<String> parts = req.name.trim().split('\\s+', 2);
+            Contact created = new Contact(
+                Email = req.email,
+                AccountId = accountId,
+                Phone = blankToNull(req.phone),
+                FirstName = parts.size() > 1 ? parts[0] : null,
+                LastName = parts.size() > 1 ? parts[1] : parts[0]
+            );
+            insert created;
+            return created;
+        }
+        Contact contact = existing[0];
+        Boolean changed = false;
+        if (String.isBlank(contact.Phone) && String.isNotBlank(req.phone)) {
+            contact.Phone = req.phone;
+            changed = true;
+        }
+        if (contact.AccountId == null) {
+            contact.AccountId = accountId;
+            changed = true;
+        }
+        if (changed) {
+            update contact;
+        }
         return contact;
     }
 
@@ -249,6 +288,7 @@ public with sharing class HtPcbQuoteService {
             ContactId = contactId,
             Email = req.email,
             Phone = req.phone,
+            Pricebook2Id = HtPcbQuoteLines.standardPricebookId(),
             Description = buildFormSummary(req),
             PCB_Board_Type__c = req.boardType,
             PCB_Single_Up_Or_Array__c = req.singleUpOrArray,
@@ -335,25 +375,77 @@ public with sharing class HtPcbQuoteService {
         );
     }
 
+    private static void linkConversationToContact(Id conversationId, Contact contact, Id accountId) {
+        String fullName = String.join(
+            new List<String>{ nullToEmpty(contact.FirstName), nullToEmpty(contact.LastName) }, ' '
+        ).trim();
+        insert new ConversationLink__c(
+            Conversation__c = conversationId,
+            Account__c = accountId,
+            RelatedObjectApiName__c = 'Contact',
+            RelatedRecordId__c = String.valueOf(contact.Id),
+            RelatedRecordName__c = fullName,
+            LinkType__c = 'Secondary'
+        );
+    }
+
+    private static void createOpportunityContactRole(Id opportunityId, Id contactId) {
+        insert new OpportunityContactRole(
+            OpportunityId = opportunityId,
+            ContactId = contactId,
+            IsPrimary = true,
+            Role = 'Decision Maker'
+        );
+    }
+
+    /** The PCB Fabrication line is best effort: a missing product must not fail the visitor. */
+    private static void createPcbLineItem(Quote quote) {
+        try {
+            PricebookEntry entry = HtPcbQuoteLines.pcbEntry(quote.Pricebook2Id);
+            if (entry == null) {
+                System.debug(LoggingLevel.WARN, 'HtPcbQuoteService: PCB Fabrication product not found; quote ' + quote.Id + ' has no line item.');
+                return;
+            }
+            insert new QuoteLineItem(
+                QuoteId = quote.Id,
+                PricebookEntryId = entry.Id,
+                Product2Id = entry.Product2Id,
+                Quantity = quote.PCB_Quantity__c,
+                UnitPrice = 0,
+                Description = HtPcbQuoteLines.specSummary(quote)
+            );
+        } catch (Exception e) {
+            System.debug(LoggingLevel.WARN, 'HtPcbQuoteService: line item skipped for quote ' + quote.Id + ': ' + e.getMessage());
+        }
+    }
+
+    private static String blankToNull(String value) {
+        return String.isBlank(value) ? null : value;
+    }
+
     private static String buildFormSummary(QuoteRequest req) {
-        List<String> lines = new List<String>{
-            'PCB Instant Quote request',
-            'Name: ' + nullToEmpty(req.name),
-            'Company: ' + nullToEmpty(req.company),
-            'Email: ' + nullToEmpty(req.email),
-            'Phone: ' + nullToEmpty(req.phone),
-            'Board Type: ' + nullToEmpty(req.boardType),
-            'Single Up or Array: ' + nullToEmpty(req.singleUpOrArray),
-            'Unit: ' + nullToEmpty(req.unitOfMeasure),
-            'Width: ' + String.valueOf(req.width),
-            'Length: ' + String.valueOf(req.length),
-            'Layers: ' + String.valueOf(req.layers),
-            'Lead Time Days: ' + String.valueOf(req.leadTimeDays),
-            'Quantity: ' + String.valueOf(req.quantity),
-            'ITAR Classification: ' + nullToEmpty(req.itarClassification),
-            'Comment: ' + nullToEmpty(req.comment)
-        };
+        List<String> lines = new List<String>{ 'PCB Instant Quote request' };
+        addLine(lines, 'Name', req.name);
+        addLine(lines, 'Company', req.company);
+        addLine(lines, 'Email', req.email);
+        addLine(lines, 'Phone', req.phone);
+        addLine(lines, 'Board Type', req.boardType);
+        addLine(lines, 'Single Up or Array', req.singleUpOrArray);
+        addLine(lines, 'Unit', req.unitOfMeasure);
+        addLine(lines, 'Width', HtPcbQuoteLines.fmt(req.width));
+        addLine(lines, 'Length', HtPcbQuoteLines.fmt(req.length));
+        addLine(lines, 'Layers', HtPcbQuoteLines.fmt(req.layers));
+        addLine(lines, 'Lead Time Days', HtPcbQuoteLines.fmt(req.leadTimeDays));
+        addLine(lines, 'Quantity', HtPcbQuoteLines.fmt(req.quantity));
+        addLine(lines, 'ITAR Classification', req.itarClassification);
+        addLine(lines, 'Comment', req.comment);
         return String.join(lines, '\n');
+    }
+
+    private static void addLine(List<String> lines, String label, String value) {
+        if (String.isNotBlank(value)) {
+            lines.add(label + ': ' + value);
+        }
     }
 
     private static String nullToEmpty(String value) {

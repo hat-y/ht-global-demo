@@ -319,6 +319,8 @@ function validateQuote(body) {
   out.message = str(body, 'message', 2000);
   for (const k of ['boardType', 'unitOfMeasure', 'itarClassification']) out[k] = str(body, k, 80);
   out.layers = num(body, 'layers', 1, 64, { integer: true });
+  const rawQty = body.quantity;
+  if (rawQty == null || (typeof rawQty === 'string' && rawQty.trim() === '')) throw new HttpError(400, 'Quantity is required.');
   out.quantity = num(body, 'quantity', 1, 1000000, { integer: true });
   out.width = num(body, 'width', 0, 10000);
   out.length = num(body, 'length', 0, 10000);

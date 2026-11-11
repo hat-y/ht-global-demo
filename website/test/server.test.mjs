@@ -211,9 +211,21 @@ test('POST trims, caps lengths and drops unknown fields', () => withServer({}, a
 }));
 
 test('POST accepts null optional numbers (widget sends null when empty)', () => withServer({}, async (s) => {
-  const res = await json(s.base, 'POST', '/api/quote', { name: 'A', company: 'B', email: 'a@b.co', width: null, length: null, leadTimeDays: null, quantity: null, layers: 2 });
+  const res = await json(s.base, 'POST', '/api/quote', { name: 'A', company: 'B', email: 'a@b.co', width: null, length: null, leadTimeDays: null, quantity: 5, layers: 2 });
   assert.equal(res.status, 200);
   assert.equal(s.calls.sf.length, 1);
+}));
+
+test('POST requires quantity: missing, null or blank → 400 "Quantity is required." and no Salesforce call', () => withServer({ config: { limits: { post: { max: 1000, windowMs: 1000 } } } }, async (s) => {
+  for (const q of [undefined, null, '', '   ']) {
+    const res = await json(s.base, 'POST', '/api/quote', { ...validQuote, quantity: q });
+    assert.equal(res.status, 400, String(q));
+    assert.deepEqual(await res.json(), { success: false, errorMessage: 'Quantity is required.' });
+  }
+  assert.equal(s.calls.sf.length, 0);
+  const ok = await json(s.base, 'POST', '/api/quote', { ...validQuote, quantity: '120' });
+  assert.equal(ok.status, 200);
+  assert.equal(s.calls.sf[0].body.quantity, 120);
 }));
 
 test('PATCH validation: ids shaped like Salesforce ids and 1..2000 char message', () => withServer({ config: { limits: { patch: { max: 1000, windowMs: 1000 } } } }, async (s) => {
@@ -257,6 +269,13 @@ test('empty "website" field is not a honeypot hit', () => withServer({}, async (
   assert.equal(s.calls.sf.length, 1);
   assert.equal(s.calls.sf[0].body.website, undefined);
 }));
+
+test('widget marks Quantity as required with inline validation', async () => {
+  const fs = await import('node:fs');
+  const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'chat-widget.js'), 'utf8');
+  assert.match(js, /name: 'quantity', label: 'Quantity', required: true/);
+  assert.match(js, /Please enter a quantity\./);
+});
 
 test('widget form has a hidden honeypot input and sends it', async () => {
   const fs = await import('node:fs');
