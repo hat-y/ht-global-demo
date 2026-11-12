@@ -49,8 +49,10 @@
         var parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
           var st = Object.assign(freshState(), parsed);
-          // Session from before the intro existed: replay it only when no quote was started yet.
-          if (typeof parsed.intro !== 'number') st.intro = parsed.quoteId ? 3 : 0;
+          // Until a quote exists, every page load plays the intro again (the typed draft is kept),
+          // so the assistant always starts by writing instead of showing the form at once.
+          if (!st.quoteId) st.intro = 0;
+          else if (typeof parsed.intro !== 'number') st.intro = 3;
           return st;
         }
       }
