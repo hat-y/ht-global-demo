@@ -887,7 +887,13 @@
     else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
   });
   document.addEventListener('click', function (e) {
-    if (!menu.hidden && !menu.contains(e.target) && !menuBtn.contains(e.target)) closeMenu();
+    if (menu.hidden) return;
+    // composedPath() is captured when the click is dispatched, so it still contains the menu even
+    // when the clicked item was replaced in the meantime ("Start a new quote" swaps in the
+    // confirmation); checking the removed element against the menu would close it at once.
+    var path = e.composedPath ? e.composedPath() : [e.target];
+    if (path.indexOf(menu) !== -1 || path.indexOf(menuBtn) !== -1) return;
+    closeMenu();
   });
 
   function resetAll() {

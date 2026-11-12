@@ -72,3 +72,11 @@ test('widget: a stored-but-not-logged response (messageLogged:false) counts as u
   assert.match(js, /json\.stored/);
   assert.match(js, /messageLogged/);
 });
+
+test('widget menu: the outside-click handler uses the dispatch-time path, so "Start a new quote" can swap in its confirmation without closing the menu', () => {
+  // Regression: the item that is clicked is removed when the confirmation is built; checking
+  // menu.contains(e.target) afterwards closed the menu at once and the reset never happened.
+  const handler = js.slice(js.indexOf("document.addEventListener('click'"), js.indexOf("function resetAll"));
+  assert.match(handler, /composedPath/);
+  assert.doesNotMatch(handler, /menu\.contains\(e\.target\)/);
+});
