@@ -17,7 +17,7 @@ English demo for Vince on Salesforce org `ht-global`.
   - Then it is a free chat: the n8n assistant answers, and team replies from the Sellium Console show up too (it polls the Salesforce thread).
   - The conversation survives page changes and reloads (sessionStorage). "Start a new quote" is in the panel menu.
   - Code: `website/public/chat-widget.js` and `chat-widget.css`, with no dependencies.
-- **Seed data.** Four quotes with English threads: Summit Avionics (Vince Carter, the main story, with a team reply and an internal ITAR note), Aero Circuits, Lakeview Robotics, Cascade Sensors. Re-seed safely with `sf apex run -o ht-global -f scripts/seed-ht-demo-threads.apex`; it is idempotent.
+- **Data.** The org starts empty: no Accounts, Contacts, Opportunities, Quotes or conversations. The demo creates the first RFQ live from the website. Only the configuration records remain, such as the "PCB Fabrication" product on the Standard Price Book (`scripts/seed-ht-pcb-product.apex`, idempotent).
 - **n8n integration user.** It signs in through the JWT External Client App `HT_Global_N8N_Integration`. Setup notes are in `.secrets/ht-global-n8n/README.md`, which is gitignored.
 
 - **AI quote agent on n8n.** It runs on the vendor n8n (`<n8n-host>`) as the workflow "HT Global - PCB Quote Agent" (tag `ht-global-demo`) and is modelled on SelliumWork, without Meta/WhatsApp.
@@ -37,7 +37,7 @@ English demo for Vince on Salesforce org `ht-global`.
 ## Pending
 
 - GitHub Actions does not start on account `hat-y` (`startup_failure` on every private repo, account billing/Actions). Until that is fixed, deploy manually with the command above.
-- The agent answers only conversations created by the integration user (Conversation__c is private). The 4 seeded threads are admin-owned: they are for showing, and live RFQs from the website get agent replies.
+- The agent answers only conversations created by the integration user (Conversation__c is private). Every RFQ that comes in through the website is created that way, so the agent can answer it.
 
 ## Orgs
 
@@ -48,11 +48,11 @@ English demo for Vince on Salesforce org `ht-global`.
 
 ## Operator walkthrough
 
-1. Open the **Sellium Console** app.
-2. **Console** tab: select Vince Carter / Summit Avionics. Show the thread, the internal note and assignment.
-3. **Quotes** tab: open "PCB RFQ - Summit Avionics". The Conversation tab shows the same thread; Details shows the PCB fields.
-4. Live RFQ: run the website, click the round assistant button, fill the 3 steps and chat. The assistant replies in a few seconds, and the new Quote appears under **Quotes** with its Conversation tab.
-5. In the console, take control of that conversation and reply. The reply appears in the website chat and the assistant stops answering.
+1. Open https://htglobal.vantegrateos.com (incognito), click the round assistant button and watch it introduce the form.
+2. Fill the 3 steps (Contact, Board, Details), optionally attaching a drawing or a Gerber zip (max 5 MB). The assistant replies in a few seconds and asks only for the missing specs; give finish, thickness, copper and lead time in the chat.
+3. In Salesforce, open the **Sellium Console** app. The **Quotes** tab shows the new RFQ: the highlights, the Path, the RFQ tab with the PCB and fabrication fields filled in from the chat, the Conversation tab, and Files.
+4. In **Conversation Console**, open the thread, **Take control** and reply. The reply appears in the website chat and the assistant stops answering.
+5. Price it: set the unit price on the "PCB Fabrication" line (Edit Products), move the Path to **Presented**, and use Activity → **Send Quote** (email to the contact).
 
 ## Website
 
