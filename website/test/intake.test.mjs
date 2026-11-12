@@ -289,7 +289,7 @@ test('POST /api/quote without a transcript sends none, and a plain body is still
 test('intake: deferred is accepted, forwarded to n8n, echoed (only still-missing names) and moved to the end of missing', () => withServer({
   intakeImpl: async () => ({ reply: 'ok', quickReplies: [], fieldUpdates: { phone: '+1 555 0100' } })
 }, async (s) => {
-  const body = { history: [], fields: { name: 'Facundo', company: 'Acme' }, deferred: ['email', 'phone', 'name', 'bogus'], message: 'later' };
+  const body = { history: [], fields: { name: 'Jordan', company: 'Acme' }, deferred: ['email', 'phone', 'name', 'bogus'], message: 'later' };
   const j = await (await json(s.base, 'POST', '/api/intake', body)).json();
   assert.deepEqual(j.deferred, ['email']); // phone got filled, name already present, bogus unknown
   assert.deepEqual(j.missing, ORDER.filter((k) => !['name', 'company', 'phone', 'email'].includes(k)).concat(['email']));
