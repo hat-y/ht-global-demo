@@ -67,3 +67,7 @@ The next deploy from `main` overwrites the rollback, so revert the commit on `ma
 - Caddy needs nothing extra: it has no default request body limit (do not add `request_body max_size` below 25MB).
 - Not scanned for malware: files are stored as-is in Salesforce (the integration user owns them); the team opens them from the Quote's Files.
 - Logs: one JSON line per stored upload (`file_uploaded`: name, size, type, quote id; never the content).
+
+## Conversational intake
+
+`POST /api/intake` proxies the chat to the n8n intake webhook (`N8N_INTAKE_WEBHOOK_URL` in `web.env`, same `N8N_AGENT_SECRET`, 15 s timeout; `RATE_INTAKE_*` limit it per IP). The server re-validates the agent's field updates and computes `missing`/`complete` itself; if n8n is unset or down, a built-in step-by-step fallback keeps the intake going. Nothing is written to Salesforce until the visitor confirms (`POST /api/quote`, optionally with a `transcript`).

@@ -6,6 +6,16 @@ public with sharing class HtPcbQuoteService {
     /** Plain exception: AuraHandledException hides its message ('Script-thrown exception') outside Aura. */
     public class HtPcbQuoteException extends Exception {}
 
+    /** One turn of the website intake chat: role is 'assistant' or 'customer'. */
+    public class TranscriptItem {
+        public String role;
+        public String text;
+    }
+
+    public static final Integer MAX_TRANSCRIPT_ITEMS = 60;
+    public static final Integer MAX_TRANSCRIPT_TEXT = 2000;
+    public static final String ASSISTANT_NAME = 'HT Global assistant';
+
     public class QuoteRequest {
         public String name;
         public String company;
@@ -26,6 +36,8 @@ public with sharing class HtPcbQuoteService {
         public String quoteId;
         /** True when the message announces a Gerber/ODB++ upload: sets Quote.PCB_Gerbers_Received__c. */
         public Boolean gerbersReceived;
+        /** Optional intake chat shown in the Sellium conversation before the form summary. */
+        public List<TranscriptItem> transcript;
     }
 
     public static HtPcbQuoteResult startQuote(QuoteRequest req) {
@@ -41,6 +53,7 @@ public with sharing class HtPcbQuoteService {
             createPcbLineItem(quote);
             Conversation__c conversation = createConversation(req, contact);
             createOpportunityContactRole(opportunity.Id, contact.Id);
+            createTranscriptMessages(conversation.Id, req);
             createInboundMessage(conversation.Id, buildFormSummary(req), req.name);
             if (String.isNotBlank(req.message)) {
                 createInboundMessage(conversation.Id, req.message, req.name);
@@ -57,6 +70,7 @@ public with sharing class HtPcbQuoteService {
             res.opportunityId = opportunity.Id;
             res.accountId = account.Id;
             res.contactId = contact.Id;
+            res.serverTime = System.now();
             return res;
         } catch (Exception e) {
             Database.rollback(sp);
@@ -238,6 +252,63 @@ public with sharing class HtPcbQuoteService {
         if (req.quantity == null || req.quantity < 1) {
             throw new HtPcbQuoteException('Quantity is required.');
         }
+        validateTranscript(req.transcript);
+    }
+
+    private static void validateTranscript(List<TranscriptItem> items) {
+        if (items == null) {
+            return;
+        }
+        if (items.size() > MAX_TRANSCRIPT_ITEMS) {
+            throw new HtPcbQuoteException('transcript must have at most ' + MAX_TRANSCRIPT_ITEMS + ' items.');
+        }
+        for (TranscriptItem item : items) {
+            if (item == null || (item.role != 'assistant' && item.role != 'customer')) {
+                throw new HtPcbQuoteException('transcript role must be assistant or customer.');
+            }
+            if (item.text != null && item.text.length() > MAX_TRANSCRIPT_TEXT) {
+                throw new HtPcbQuoteException('transcript text must be at most ' + MAX_TRANSCRIPT_TEXT + ' characters.');
+            }
+        }
+    }
+
+    /**
+     * The intake chat, in order, in one insert: customer turns are inbound (sender = the customer),
+     * assistant turns are outbound agent messages. Dated a second apart and just before "now", so the
+     * form summary that follows is the newest message.
+     */
+    private static void createTranscriptMessages(Id conversationId, QuoteRequest req) {
+        if (req.transcript == null || req.transcript.isEmpty()) {
+            return;
+        }
+        List<TranscriptItem> items = new List<TranscriptItem>();
+        for (TranscriptItem item : req.transcript) {
+            if (String.isNotBlank(item.text)) {
+                items.add(item);
+            }
+        }
+        if (items.isEmpty()) {
+            return;
+        }
+        Datetime start = System.now().addSeconds(-(items.size() + 1));
+        List<ConversationMessage__c> rows = new List<ConversationMessage__c>();
+        for (Integer i = 0; i < items.size(); i++) {
+            Boolean customer = items[i].role == 'customer';
+            rows.add(new ConversationMessage__c(
+                Conversation__c = conversationId,
+                Body__c = items[i].text,
+                IsInbound__c = customer,
+                IsAgentMessage__c = !customer,
+                IsHumanMessage__c = false,
+                IsInternal__c = false,
+                IsSystemMessage__c = false,
+                SenderDisplayName__c = customer ? req.name : ASSISTANT_NAME,
+                SentDate__c = start.addSeconds(i),
+                DeliveryStatus__c = 'Delivered'
+            ));
+        }
+        insert rows;
+        update new Conversation__c(Id = conversationId, MessageSequence__c = rows.size());
     }
 
     /**

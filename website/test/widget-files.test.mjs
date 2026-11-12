@@ -39,10 +39,11 @@ test('widget: successful upload shows a "📎 name (size)" bubble', () => {
   assert.match(js, /fmtSize\(/);
 });
 
-test('widget: Details step has an optional "Drawings, stack-up or Gerbers" file field, uploaded right after the quote is created', () => {
-  assert.match(js, /Drawings, stack-up or Gerbers/);
-  assert.match(js, /formFiles/);
-  assert.match(js, /uploadBatch\(formFiles/);
+test('widget: files attached during the intake are held client-side and uploaded right after the quote is created', () => {
+  assert.match(js, /heldFiles/);
+  assert.match(js, /uploadBatch\(heldFiles\.splice\(0, heldFiles\.length\), true\)/);
+  assert.match(js, /Sent when you confirm/);
+  assert.doesNotMatch(js, /formFiles/);
 });
 
 test('widget: file UI uses textContent only (no innerHTML with data) and has styles', () => {
@@ -57,9 +58,9 @@ test('PRESERVE: widget still has the honeypot, quantity validation and message s
   assert.match(js, /method: 'PATCH'/);
 });
 
-test('widget: files in the Details step send filesPending:true only when there are files; batch uploads use more=1 except the last', () => {
+test('widget: held files send filesPending:true only when there are files; batch uploads use more=1 except the last', () => {
   assert.match(js, /filesPending/);
-  assert.match(js, /if \(formFiles\.length\) payload\.filesPending = true/);
+  assert.match(js, /if \(heldFiles\.length\) payload\.filesPending = true/);
   assert.match(js, /sendFile\(files\[i\], addRow\(files\[i\]\), !last\)/);
 });
 

@@ -1,13 +1,18 @@
-/* HT Global Quote Assistant: floating chat launcher + guided RFQ + live chat.
+/* HT Global Quote Assistant: floating chat launcher + conversational RFQ intake + live chat.
  * Single implementation shared by every page (home and /quote). No dependencies, no build step.
  *
- * Step 1 (form): a guided 3-step form rendered inside the conversation. Submits to POST /api/quote.
- * Step 2 (chat): free text via PATCH /api/quote; replies (n8n assistant + Sellium team) arrive by
- *                polling GET /api/quote/messages (4 s, paused while hidden, 15 s after 2 min idle,
- *                deduped by id, rendered with textContent only).
- * Files: the paperclip in the composer and the optional file field of the Details step upload the raw file to
- *        POST /api/quote/files (type, size and count are checked here too; the server is the authority).
- * State (quoteId, conversationId, thread, draft) lives in sessionStorage so it survives navigation.
+ * Phase "intake": the AI assistant talks to the visitor in natural English (POST /api/intake), offers quick-reply
+ *                 buttons for the options, and fills the quote fields as the visitor answers. When every required
+ *                 field is in, an editable summary card ("Here's what I have") offers Confirm / Change something.
+ *                 Nothing is created in Salesforce before Confirm.
+ * Phase "chat":   Confirm posts POST /api/quote with the fields and the whole intake as a transcript; from then on
+ *                 free text goes via PATCH /api/quote; replies (n8n assistant + Sellium team) arrive by polling
+ *                 GET /api/quote/messages (4 s, paused while hidden, 15 s after 2 min idle, deduped by id,
+ *                 rendered with textContent only).
+ * Files: the paperclip in the composer uploads the raw file to POST /api/quote/files (type, size and count are
+ *        checked here too; the server is the authority). During the intake files are held client-side and
+ *        uploaded right after the quote is created.
+ * State (history, fields, summary state, quoteId, conversationId, thread) lives in sessionStorage so a reload resumes.
  */
 (function () {
   'use strict';
@@ -18,17 +23,23 @@
   var POLL_SLOW_MS = 15000;
   var SLOW_AFTER_MS = 120000;
   var TYPING_MAX_MS = 45000;
+  var REPLY_MIN_MS = 700; // an assistant reply never pops in faster than this: it "types" first
   var MAX_THREAD = 200;
+  var MAX_HISTORY = 120;
+  var SEND_HISTORY = 30; // /api/intake accepts at most 30 earlier turns
+  var SEND_TRANSCRIPT = 60; // POST /api/quote accepts at most 60 turns
+  var MAX_TURN_CHARS = 2000;
   var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
   var BOARD_TYPES = ['Rigid PCB', 'Flex PCB', 'Rigid-Flex PCB', 'HDI PCB', 'Metal Core PCB', 'High Frequency PCB'];
-  var LEAD_TIMES = ['3', '4', '5', '6', '7', '10', '15'];
-  var STEP_TITLES = ['Contact', 'Board', 'Details'];
+  var REQUIRED_COUNT = 12; // name, company, email, phone, board type, single up/array, unit, width, length, layers, quantity, classification
+  var NUMERIC = { width: 1, length: 1, layers: 1, quantity: 1, leadTimeDays: 1 };
   var FILE_EXT = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'zip', 'gbr', 'tgz'];
   var FILE_ACCEPT = FILE_EXT.map(function (e) { return '.' + e; }).join(',');
   var FILE_TYPES_TEXT = 'pdf, doc, docx, xls, xlsx, csv, jpg, png, zip, gbr or tgz';
   var MAX_FILE_BYTES = 5 * 1024 * 1024; // must match the server's UPLOAD_MAX_BYTES
   var MAX_FILES = 5;
   var RISKY_INNER = ['exe', 'bat', 'cmd', 'com', 'scr', 'pif', 'js', 'jse', 'mjs', 'vbs', 'vbe', 'wsf', 'ps1', 'sh', 'bash', 'jar', 'msi', 'dll', 'hta', 'lnk', 'reg', 'html', 'htm', 'xhtml', 'svg', 'php', 'py', 'pl', 'cgi', 'asp', 'aspx', 'jsp', 'apk', 'app', 'dmg', 'docm', 'xlsm'];
+  var SUB_DEFAULT = 'Usually replies in seconds';
 
   var scriptEl = document.currentScript;
   var autoOpen = !!(scriptEl && scriptEl.hasAttribute('data-autoopen'));
@@ -36,12 +47,16 @@
   // ---------- state ----------
   function freshState() {
     return {
-      phase: 'form',
-      intro: 0, // opening sequence progress: 0 nothing, 1 hello shown, 2 explainer shown, 3 form card shown
-      step: 1,
-      draft: {},
+      phase: 'intake', // 'intake' | 'chat'
+      history: [], // intake turns: { role: 'assistant'|'customer', text, chips?: [{label,value}], note?: true }
+      fields: {}, // validated by the server on every turn
+      missing: [],
+      complete: false,
+      editing: false, // summary card in edit mode
+      editDraft: null,
       quoteId: null,
       conversationId: null,
+      baseline: null, // server time at creation: messages up to here are the intake transcript
       thread: [],
       seen: [],
       pendingSince: null,
@@ -56,10 +71,9 @@
         var parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
           var st = Object.assign(freshState(), parsed);
-          // Until a quote exists, every page load plays the intro again (the typed draft is kept),
-          // so the assistant always starts by writing instead of showing the form at once.
-          if (!st.quoteId) st.intro = 0;
-          else if (typeof parsed.intro !== 'number') st.intro = 3;
+          if (st.phase !== 'chat') st.phase = 'intake'; // sessions of the old form flow start the intake
+          if (!Array.isArray(st.history)) st.history = [];
+          if (!st.fields || typeof st.fields !== 'object') st.fields = {};
           return st;
         }
       }
@@ -69,6 +83,7 @@
   function save() {
     try {
       if (S.thread.length > MAX_THREAD) S.thread = S.thread.slice(-MAX_THREAD);
+      if (S.history.length > MAX_HISTORY) S.history = S.history.slice(-MAX_HISTORY);
       sessionStorage.setItem(STORE_KEY, JSON.stringify(S));
     } catch (e) { /* ignore quota / private mode */ }
   }
@@ -123,12 +138,13 @@
   var tip = h('span', { class: 'htcw-tip', 'aria-hidden': 'true', text: 'Get an instant quote' });
 
   var titleEl = h('h2', { class: 'htcw-title', id: 'htcw-title', text: 'HT Global Quote Assistant' });
+  var subEl = h('p', { class: 'htcw-sub', text: SUB_DEFAULT });
   var menuBtn = h('button', { type: 'button', class: 'htcw-iconbtn', 'aria-label': 'Quote options', 'aria-haspopup': 'menu', 'aria-expanded': 'false' }, svg(ICON_MORE));
   var closeBtn = h('button', { type: 'button', class: 'htcw-iconbtn', 'aria-label': 'Close chat' }, svg(ICON_CLOSE));
   var menu = h('div', { class: 'htcw-menu', role: 'menu', hidden: true });
   var header = h('div', { class: 'htcw-head' },
     h('span', { class: 'htcw-avatar', 'aria-hidden': 'true', text: 'HT' }),
-    h('div', { class: 'htcw-headtext' }, titleEl, h('p', { class: 'htcw-sub', text: 'Usually replies in seconds' })),
+    h('div', { class: 'htcw-headtext' }, titleEl, subEl),
     menuBtn, closeBtn, menu);
 
   var log = h('div', { class: 'htcw-log', role: 'log', 'aria-live': 'polite', 'aria-relevant': 'additions', 'aria-label': 'Conversation', tabindex: '-1' });
@@ -136,16 +152,19 @@
     h('span', { class: 'htcw-dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
     h('span', { class: 'htcw-typing-text', text: 'Assistant is replying…' }));
   var composerErr = h('p', { class: 'htcw-err htcw-composer-err', role: 'alert', hidden: true });
-  var input = h('textarea', { class: 'htcw-input', rows: '1', maxlength: '4000', placeholder: 'Type your message…', 'aria-label': 'Message to the HT Global assistant' });
+  var input = h('textarea', { class: 'htcw-input', rows: '1', maxlength: '2000', placeholder: 'Type your answer…', 'aria-label': 'Message to the HT Global assistant' });
   var sendBtn = h('button', { type: 'submit', class: 'htcw-send', 'aria-label': 'Send message' }, svg(ICON_SEND));
   var clipBtn = h('button', { type: 'button', class: 'htcw-clip', 'aria-label': 'Attach files (' + FILE_TYPES_TEXT + '; up to 5 MB each, 5 at a time)' }, svg(ICON_CLIP));
   var fileInput = h('input', { type: 'file', class: 'htcw-fileinput', multiple: true, accept: FILE_ACCEPT, tabindex: '-1', 'aria-hidden': 'true' });
   var fileTray = h('ul', { class: 'htcw-files', 'aria-label': 'Attachments', hidden: true });
   var fileLive = h('p', { class: 'htcw-sr', role: 'status', 'aria-live': 'polite' });
-  var composer = h('form', { class: 'htcw-composer', hidden: true, novalidate: true }, composerErr, fileTray, fileLive, h('div', { class: 'htcw-row' }, clipBtn, fileInput, input, sendBtn));
+  var composer = h('form', { class: 'htcw-composer', novalidate: true }, composerErr, fileTray, fileLive, h('div', { class: 'htcw-row' }, clipBtn, fileInput, input, sendBtn));
+  // Honeypot: invisible to people, bots fill it. The server drops the request silently if it is non-empty.
+  var trap = h('div', { 'aria-hidden': 'true', style: 'position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden' },
+    h('input', { type: 'text', name: 'website', tabindex: '-1', autocomplete: 'off' }));
   var panel = h('section', {
     id: 'htcw-panel', class: 'htcw-panel', role: 'dialog', 'aria-modal': 'false', 'aria-labelledby': 'htcw-title', hidden: true
-  }, header, log, typing, composer);
+  }, header, log, typing, composer, trap);
 
   root.appendChild(panel);
   root.appendChild(launcher);
@@ -153,6 +172,7 @@
 
   // ---------- thread rendering ----------
   function scrollDown() { log.scrollTop = log.scrollHeight; }
+  var ASSISTANT = 'HT Global assistant';
 
   function bubble(entry) {
     var cls = 'htcw-msg ' + (entry.who === 'user' ? 'htcw-user' : 'htcw-agent');
@@ -168,91 +188,177 @@
     scrollDown();
     return el;
   }
-  function transient(who, text, sender) {
-    var el = bubble({ who: who, text: text, sender: sender });
-    log.appendChild(el);
-    scrollDown();
-    return el;
-  }
 
-  // ---------- form phase ----------
-  var ASSISTANT = 'HT Global assistant';
-  var INTRO = [
-    'Hi! I\u2019m the HT Global quote assistant.',
-    'To get your quote started, please fill out the short form I\u2019m about to show you with your contact and board details. Once you send it, we can chat about anything else your PCB needs, like finish, stack-up or delivery.'
-  ];
-  // Typing pause before each intro step: hello, explainer, form card. The assistant "writes" first, so the
-  // visitor never gets everything at once. Pacing is content timing, not motion: it also applies with
-  // prefers-reduced-motion (only the slide-in animation is dropped there).
-  var INTRO_TYPING_MS = [1300, 2200, 1800];
-  function prompts(step) {
-    var first = (S.draft.name || '').trim().split(/\s+/)[0];
-    if (step === 2) return 'Thanks' + (first ? ', ' + first : '') + '. What kind of board do you need?';
-    return 'Nearly there. The export classification is required. Lead time, notes and files are optional, but they help our team quote faster.';
-  }
-  function summary(step) {
-    var d = S.draft;
-    if (step === 1) return [d.name, d.company, d.email, d.phone].filter(Boolean).join(' \u00b7 ');
-    if (step === 2) {
-      var parts = [d.boardType, d.layers + ' layer' + (String(d.layers) === '1' ? '' : 's')];
-      if (d.quantity) parts.push('qty ' + d.quantity);
-      return parts.join(' \u00b7 ');
-    }
-    return '';
-  }
+  // ---------- intake phase ----------
+  var intakeToken = 0; // bumps on reset, so a late answer of an abandoned intake is ignored
+  var intakeBusy = false;
+  var summaryEl = null;
+  var retryEl = null;
 
-  var activeCard = null;
-  var introTimer = null;
   function reducedMotion() { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
-  function renderForm() {
-    clearTimeout(introTimer);
-    introTimer = null;
-    activeCard = null;
-    log.textContent = '';
-    composer.hidden = true;
-    typing.hidden = true;
-    for (var i = 0; i < Math.min(S.intro, 2); i++) transient('agent', INTRO[i], ASSISTANT);
-    if (S.intro < 3) { if (S.intro > 0 || isOpen) runIntro(); return; } // a never-opened chat starts its intro on first open
-    for (var s = 1; s < S.step; s++) {
-      transient('user', summary(s));
-      transient('agent', prompts(s + 1), ASSISTANT);
-    }
-    log.appendChild(buildCard(S.step));
+  function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function firstName() { return (S.fields.name || '').trim().split(/\s+/)[0] || ''; }
+
+  function updateProgress() {
+    var done = S.complete ? REQUIRED_COUNT : (S.missing && S.missing.length ? REQUIRED_COUNT - S.missing.length : 0);
+    subEl.textContent = S.phase === 'intake' && done > 0 ? done + ' of ' + REQUIRED_COUNT + ' details' : SUB_DEFAULT;
+  }
+
+  function chipRow(entry, enabled) {
+    var group = h('div', { class: 'htcw-qr', role: 'group', 'aria-label': 'Quick replies' });
+    entry.chips.forEach(function (c) {
+      var b = h('button', { type: 'button', class: 'htcw-qr-btn', text: c.label, disabled: !enabled });
+      b.addEventListener('click', function () { sendCustomer(c.value); });
+      group.appendChild(b);
+    });
+    return group;
+  }
+  function disableChips() {
+    Array.prototype.forEach.call(log.querySelectorAll('.htcw-qr-btn'), function (b) { b.disabled = true; });
+  }
+  function appendHistory(entry, live) {
+    log.appendChild(bubble({ who: entry.role === 'assistant' ? 'agent' : 'user', sender: entry.role === 'assistant' ? ASSISTANT : null, text: entry.text }));
+    if (entry.chips && entry.chips.length) log.appendChild(chipRow(entry, live));
     scrollDown();
   }
-  // Opening sequence: typing -> hello -> typing -> explainer -> typing -> form card. Progress is kept in S.intro,
-  // so closing the panel never loses it and a reload resumes where it was (a finished intro never replays).
-  function runIntro() {
-    clearTimeout(introTimer);
-    introTimer = null;
+
+  function renderIntake() {
+    activeSummaryCleanup();
+    log.textContent = '';
+    retryEl = null;
+    typing.hidden = true;
+    composer.hidden = false;
+    input.placeholder = 'Type your answer…';
+    var last = S.history.length - 1;
+    S.history.forEach(function (e, i) { appendHistory(e, i === last && !S.complete); });
+    if (S.complete && last >= 0 && S.history[last].role === 'assistant') renderSummary(false);
+    heldTray();
+    updateProgress();
+    scrollDown();
+  }
+
+  // Greets (first open) or resumes after a reload that interrupted a request.
+  function resumeIntake() {
+    if (S.phase !== 'intake' || intakeBusy || retryEl) return;
+    if (!S.history.length) { requestIntake(null, []); return; }
+    var last = S.history[S.history.length - 1];
+    if (last.role === 'customer' && !last.note) requestIntake(last.text, S.history.slice(0, -1));
+  }
+
+  function serverHistory(list) {
+    return list.slice(-SEND_HISTORY).map(function (e) { return { role: e.role, text: String(e.text).slice(0, MAX_TURN_CHARS) }; });
+  }
+
+  async function requestIntake(message, prior) {
+    var token = ++intakeToken;
+    intakeBusy = true;
+    sendBtn.disabled = true;
+    composerErr.hidden = true;
+    if (retryEl) { retryEl.remove(); retryEl = null; }
     typing.hidden = false; scrollDown();
-    var run = function () {
-      introTimer = null;
+    var started = Date.now();
+    var failed = null;
+    try {
+      var res = await fetch('/api/intake', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ history: serverHistory(prior), fields: S.fields, message: message, website: honeypotValue() })
+      });
+      var result = await res.json();
+      if (!res.ok || !result.success) throw new Error(result.errorMessage || 'The assistant could not answer');
+      var wait = REPLY_MIN_MS - (Date.now() - started);
+      if (wait > 0) await delay(wait);
+      if (token !== intakeToken) return;
+      S.fields = result.fields || {};
+      S.missing = Array.isArray(result.missing) ? result.missing : [];
+      S.complete = !!result.complete;
+      var chips = (Array.isArray(result.quickReplies) ? result.quickReplies : []).slice(0, 7).filter(function (c) { return c && c.label && c.value; });
+      var entry = { role: 'assistant', text: String(result.reply || ''), chips: chips };
+      S.history.push(entry);
+      disableChips();
       typing.hidden = true;
-      if (S.intro === 0) {
-        transient('agent', INTRO[0], ASSISTANT);
-        S.intro = 1; save();
-        runIntro();
-      } else if (S.intro === 1) {
-        transient('agent', INTRO[1], ASSISTANT);
-        S.intro = 2; save();
-        runIntro();
-      } else if (S.intro === 2) {
-        S.intro = 3; save();
-        var card = buildCard(S.step);
-        if (!reducedMotion()) card.classList.add('htcw-card-in');
-        log.appendChild(card);
-        scrollDown();
-        if (isOpen && menu.hidden) focusFirstIn(card);
+      appendHistory(entry, !S.complete);
+      if (S.complete) renderSummary(true);
+      updateProgress();
+      save();
+    } catch (err) {
+      failed = err;
+    } finally {
+      if (token === intakeToken) {
+        intakeBusy = false;
+        typing.hidden = true;
+        sendBtn.disabled = false;
       }
-    };
-    introTimer = setTimeout(run, INTRO_TYPING_MS[S.intro]);
+    }
+    if (token !== intakeToken) return;
+    if (failed) {
+      if (message == null) {
+        // the greeting failed: say so in the chat and offer a retry
+        var row = h('div', { class: 'htcw-retry' },
+          bubble({ who: 'agent', sender: ASSISTANT, text: 'I couldn\u2019t connect just now.' }),
+          h('button', { type: 'button', class: 'htcw-btn htcw-ghost', text: 'Try again' }));
+        row.querySelector('button').addEventListener('click', function () { row.remove(); retryEl = null; requestIntake(null, []); });
+        retryEl = row;
+        log.appendChild(row);
+        scrollDown();
+      } else {
+        // take the message back so nothing is lost
+        var i = S.history.length - 1;
+        if (i >= 0 && S.history[i].role === 'customer' && S.history[i].text === message) S.history.pop();
+        save();
+        var bubbles = log.querySelectorAll('.htcw-user');
+        if (bubbles.length) bubbles[bubbles.length - 1].remove();
+        input.value = message; autoGrow();
+        composerErr.textContent = 'Message not sent: ' + (failed && failed.message ? failed.message : 'network error') + '. Your text is still in the box, so you can try again.';
+        composerErr.hidden = false;
+      }
+    }
+    if (isOpen) input.focus({ preventScroll: true });
+  }
+
+  function sendCustomer(text) {
+    text = String(text || '').trim();
+    if (!text || intakeBusy || S.phase !== 'intake') return false;
+    if (text.length > MAX_TURN_CHARS) {
+      composerErr.textContent = 'Please keep each message under 2000 characters.';
+      composerErr.hidden = false;
+      return false;
+    }
+    var prior = S.history.slice();
+    removeSummary();
+    S.editing = false; S.editDraft = null;
+    disableChips();
+    var entry = { role: 'customer', text: text };
+    S.history.push(entry);
+    save();
+    appendHistory(entry, false);
+    input.value = ''; autoGrow();
+    requestIntake(text, prior);
+    return true;
+  }
+
+  // ---------- files held during the intake ----------
+  function heldTray() {
+    fileTray.textContent = '';
+    heldFiles.forEach(function (f) {
+      var rm = h('button', { type: 'button', class: 'htcw-link', 'aria-label': 'Remove ' + f.name, text: 'Remove' });
+      rm.addEventListener('click', function () {
+        heldFiles.splice(heldFiles.indexOf(f), 1);
+        heldTray();
+        if (summaryEl) renderSummary(false);
+        input.focus();
+      });
+      fileTray.appendChild(h('li', { class: 'htcw-file' },
+        h('span', { class: 'htcw-file-name', text: f.name + ' (' + fmtSize(f.size) + ')' }),
+        h('span', { class: 'htcw-file-status', text: 'Sent when you confirm' }),
+        h('span', { class: 'htcw-file-actions' }, rm)));
+    });
+    fileTray.hidden = !fileTray.children.length;
   }
 
   var uid = 0;
 
   // ---------- files: shared rules ----------
-  var formFiles = []; // files chosen in the Details step, uploaded right after the quote is created
+  var heldFiles = []; // files attached during the intake: held here, uploaded right after the quote is created
   function fmtSize(n) {
     if (n < 1024) return n + ' B';
     if (n < 1023.5 * 1024) return Math.round(n / 1024) + ' KB';
@@ -283,56 +389,78 @@
     return { ok: ok, errors: errors };
   }
 
-  function fileField() {
-    var id = 'htcw-f-' + (++uid);
-    var helpId = id + '-help';
-    var errId = id + '-err';
-    var control = h('input', { type: 'file', id: id, multiple: true, accept: FILE_ACCEPT, 'aria-describedby': helpId + ' ' + errId });
-    var help = h('p', { class: 'htcw-help', id: helpId, text: FILE_TYPES_TEXT + ' \u00b7 up to 5 MB each \u00b7 max 5 files' });
-    var err = h('p', { class: 'htcw-err', id: errId, role: 'alert', hidden: true });
-    var list = h('ul', { class: 'htcw-picked', 'aria-label': 'Files to attach' });
-    function renderList() {
-      list.textContent = '';
-      formFiles.forEach(function (f) {
-        var rm = h('button', { type: 'button', class: 'htcw-link', 'aria-label': 'Remove ' + f.name, text: 'Remove' });
-        rm.addEventListener('click', function () {
-          formFiles.splice(formFiles.indexOf(f), 1);
-          renderList();
-          control.focus();
-        });
-        list.appendChild(h('li', null, h('span', { class: 'htcw-picked-name', text: f.name + ' (' + fmtSize(f.size) + ')' }), rm));
-      });
-    }
-    control.addEventListener('change', function () {
-      var res = pickFiles(Array.prototype.slice.call(control.files || []), formFiles.length);
-      res.ok.forEach(function (f) { formFiles.push(f); });
-      control.value = '';
-      err.textContent = res.errors.join(' ');
-      err.hidden = res.errors.length === 0;
-      renderList();
-    });
-    renderList();
-    return h('div', { class: 'htcw-field htcw-full htcw-filefield' },
-      h('label', { for: id }, 'Drawings, stack-up or Gerbers', h('span', { class: 'htcw-opt', text: ' (optional)' })),
-      control, help, err, list);
+
+  // ---------- summary card ----------
+  var GROUPS = [
+    { title: 'Contact', names: ['name', 'company', 'email', 'phone'] },
+    { title: 'Board', names: ['boardType', 'singleUpOrArray', 'unitOfMeasure', 'width', 'length', 'layers', 'quantity'] },
+    { title: 'Delivery & compliance', names: ['leadTimeDays', 'itarClassification'] }
+  ];
+  var LABELS = {
+    name: 'Name', company: 'Company', email: 'Email', phone: 'Phone', boardType: 'Board type', singleUpOrArray: 'Single up or array',
+    unitOfMeasure: 'Unit', width: 'Width', length: 'Length', layers: 'Layers', quantity: 'Quantity', leadTimeDays: 'Lead time', itarClassification: 'Classification', comment: 'Notes'
+  };
+  var CHIP_VALUES = {
+    boardType: BOARD_TYPES.map(function (b) { return [b, b]; }),
+    singleUpOrArray: [['Single Up', 'Single up'], ['Array', 'Array']],
+    unitOfMeasure: [['mm', 'mm'], ['inches', 'inches']],
+    itarClassification: [['Commercial', 'Commercial (not ITAR/EAR controlled)'], ['ITAR/EAR', 'ITAR/EAR controlled']]
+  };
+  var CHIP_MSG = { boardType: 'Please choose a board type.', singleUpOrArray: 'Please choose single up or array.', unitOfMeasure: 'Please choose the unit.', itarClassification: 'Please choose the classification.' };
+
+  function showValue(name) {
+    var v = S.fields[name];
+    if (v === undefined || v === null || v === '') return '';
+    if (name === 'width' || name === 'length') return v + ' ' + (S.fields.unitOfMeasure || '');
+    if (name === 'leadTimeDays') return v + (Number(v) === 1 ? ' day' : ' days');
+    return String(v);
   }
 
-  function field(opts) {
+  // one client rule per field, the same rules the server applies; returns '' when fine
+  function fieldProblem(name, raw) {
+    var v = String(raw == null ? '' : raw).trim();
+    if (name === 'name' && !v) return 'Please enter your name.';
+    if (name === 'company' && !v) return 'Please enter your company name.';
+    if (name === 'email') {
+      if (!v) return 'Please enter your email address.';
+      if (!EMAIL_RE.test(v)) return 'That email doesn\u2019t look right. Use a format like name@company.com.';
+    }
+    if (name === 'phone' && !v) return 'Please enter a phone number.';
+    if (name === 'layers') {
+      if (!v) return 'Please enter the number of layers.';
+      if (!(Number(v) >= 1 && Number(v) <= 64 && Number.isInteger(Number(v)))) return 'Enter a whole number of layers from 1 to 64.';
+    }
+    if (name === 'quantity') {
+      if (!v) return 'Please enter a quantity.';
+      if (!(Number(v) >= 1 && Number.isInteger(Number(v)) && Number(v) <= 1000000)) return 'Enter a whole quantity of 1 or more.';
+    }
+    if (name === 'width' || name === 'length') {
+      if (!v) return name === 'width' ? 'Please enter the board width.' : 'Please enter the board length.';
+      if (!(Number(v) > 0 && Number(v) <= 10000)) return 'Enter a ' + name + ' greater than 0 and at most 10000.';
+    }
+    if (name === 'leadTimeDays' && v && !(Number(v) >= 0 && Number(v) <= 365)) return 'Enter a lead time from 0 to 365 days, or leave it empty.';
+    if (CHIP_MSG[name] && !v) return CHIP_MSG[name];
+    return '';
+  }
+  function parseValue(name, raw) {
+    var v = String(raw == null ? '' : raw).trim();
+    if (v === '') return undefined;
+    return NUMERIC[name] ? Number(v) : v;
+  }
+
+  function field(opts, src) {
     var id = 'htcw-f-' + (++uid);
     var errId = id + '-err';
     var control;
     if (opts.kind === 'textarea') control = h('textarea', { id: id, name: opts.name, rows: '3', maxlength: '2000', placeholder: opts.placeholder || null });
-    else if (opts.kind === 'select') {
-      control = h('select', { id: id, name: opts.name });
-      opts.options.forEach(function (o) { control.appendChild(h('option', { value: o[0], text: o[1] })); });
-    } else {
+    else {
       control = h('input', {
         id: id, name: opts.name, type: opts.type || 'text', autocomplete: opts.autocomplete || null,
         inputmode: opts.inputmode || null, placeholder: opts.placeholder || null, min: opts.min || null, max: opts.max || null, step: opts.step || null, maxlength: opts.maxlength || null
       });
     }
     if (opts.required) control.setAttribute('aria-required', 'true');
-    control.value = S.draft[opts.name] != null ? S.draft[opts.name] : '';
+    control.value = src[opts.name] != null ? src[opts.name] : '';
     var err = h('p', { class: 'htcw-err', id: errId, hidden: true });
     var wrap = h('div', { class: 'htcw-field' + (opts.full ? ' htcw-full' : '') },
       h('label', { for: id }, opts.label, opts.required ? h('span', { class: 'htcw-req', 'aria-hidden': 'true', text: ' *' }) : h('span', { class: 'htcw-opt', text: ' (optional)' })),
@@ -349,16 +477,16 @@
       }
     };
   }
-  function chips(name, label, values, opts) {
+  function chips(name, label, values, opts, src) {
     opts = opts || {};
     var errId = 'htcw-r-' + name + '-err-' + (++uid);
     var legend = h('legend', { text: label }, opts.required ? h('span', { class: 'htcw-req', 'aria-hidden': 'true', text: ' *' }) : null);
     var group = h('fieldset', { class: 'htcw-chips' + (opts.full === false ? '' : ' htcw-full'), 'aria-required': opts.required ? 'true' : null }, legend);
     var list = h('div', { class: 'htcw-chiplist' });
-    values.forEach(function (v, i) {
+    values.forEach(function (v) {
       var id = 'htcw-r-' + name + '-' + (++uid);
       var radio = h('input', { type: 'radio', id: id, name: 'htcw-' + name, value: v[0] });
-      if (S.draft[name] === v[0]) radio.checked = true;
+      if (src[name] === v[0]) radio.checked = true;
       list.appendChild(h('span', { class: 'htcw-chip' }, radio, h('label', { for: id, text: v[1] })));
     });
     group.appendChild(list);
@@ -373,57 +501,90 @@
     };
   }
 
-  function buildCard(step) {
-    var fields = [];
+  function activeSummaryCleanup() { summaryEl = null; }
+  function removeSummary() { if (summaryEl) { summaryEl.remove(); summaryEl = null; } }
+
+  // The card under the assistant's last reply. announce: move focus to it only when it appears fresh.
+  function renderSummary(fresh) {
+    removeSummary();
+    var card = S.editing ? buildEditCard() : buildViewCard();
+    if (fresh && !reducedMotion()) card.classList.add('htcw-card-in');
+    summaryEl = card;
+    log.appendChild(card);
+    // the card is taller than the log: show its top, not its bottom
+    log.scrollTop += card.getBoundingClientRect().top - log.getBoundingClientRect().top - 8;
+    return card;
+  }
+
+  function buildViewCard() {
+    var status = h('p', { class: 'htcw-err htcw-card-err', role: 'alert', hidden: true });
+    var card = h('form', { class: 'htcw-card htcw-sum', novalidate: true, 'aria-label': 'Your quote request summary' },
+      h('h3', { class: 'htcw-sum-title', text: 'Here\u2019s what I have' }));
+    GROUPS.forEach(function (g) {
+      var dl = h('dl', { class: 'htcw-sum-list' });
+      g.names.forEach(function (n) {
+        var val = showValue(n);
+        dl.appendChild(h('div', { class: 'htcw-sum-row' }, h('dt', { text: LABELS[n] }), h('dd', { class: val ? '' : 'htcw-muted', text: val || 'Not provided' })));
+      });
+      card.appendChild(h('section', { class: 'htcw-sum-group', 'aria-label': g.title }, h('h4', { text: g.title }), dl));
+    });
+    var extra = h('dl', { class: 'htcw-sum-list' });
+    extra.appendChild(h('div', { class: 'htcw-sum-row' }, h('dt', { text: LABELS.comment }), h('dd', { class: S.fields.comment ? '' : 'htcw-muted', text: S.fields.comment || 'None' })));
+    extra.appendChild(h('div', { class: 'htcw-sum-row' }, h('dt', { text: 'Files' }),
+      h('dd', { class: heldFiles.length ? '' : 'htcw-muted', text: heldFiles.length ? heldFiles.map(function (f) { return f.name; }).join(', ') : 'None yet. Use the paperclip to add drawings or Gerbers.' })));
+    card.appendChild(h('section', { class: 'htcw-sum-group', 'aria-label': 'Notes and files' }, extra));
+    var confirmBtn = h('button', { type: 'submit', class: 'htcw-btn htcw-primary', text: 'Confirm' });
+    var changeBtn = h('button', { type: 'button', class: 'htcw-btn htcw-ghost', 'data-change': '', text: 'Change something' });
+    card.appendChild(status);
+    card.appendChild(h('div', { class: 'htcw-actions' }, changeBtn, confirmBtn));
+    changeBtn.addEventListener('click', function () {
+      S.editing = true;
+      S.editDraft = {};
+      Object.keys(S.fields).forEach(function (k) { S.editDraft[k] = S.fields[k]; });
+      save();
+      var c = renderSummary(false);
+      var f = c.querySelector('input:not([type=radio]), textarea');
+      if (f) f.focus({ preventScroll: true });
+    });
+    card.addEventListener('submit', function (e) {
+      e.preventDefault();
+      confirmQuote(confirmBtn, status);
+    });
+    return card;
+  }
+
+  function buildEditCard() {
+    var draft = S.editDraft || (S.editDraft = {});
+    var fields = [], chipSets = [];
+    var status = h('p', { class: 'htcw-err htcw-card-err', role: 'alert', hidden: true });
+    var card = h('form', { class: 'htcw-card htcw-sum', novalidate: true, 'aria-label': 'Change your quote details' },
+      h('h3', { class: 'htcw-sum-title', text: 'Change something' }));
     var grid = h('div', { class: 'htcw-grid' });
-    var chipSets = [];
     function add(f) { fields.push(f); grid.appendChild(f.el); return f; }
     function addChips(c) { chipSets.push(c); grid.appendChild(c.el); }
-
-    if (step === 1) {
-      add(field({ name: 'name', label: 'Your name', required: true, autocomplete: 'name', full: true }));
-      add(field({ name: 'company', label: 'Company', required: true, autocomplete: 'organization', full: true }));
-      add(field({ name: 'email', label: 'Work email', type: 'email', required: true, autocomplete: 'email', inputmode: 'email', full: true }));
-      add(field({ name: 'phone', label: 'Phone', required: true, type: 'tel', autocomplete: 'tel', inputmode: 'tel', full: true }));
-    } else if (step === 2) {
-      addChips(chips('boardType', 'Board type', BOARD_TYPES.map(function (b) { return [b, b]; }), { required: true }));
-      addChips(chips('singleUpOrArray', 'Single up or array', [['Single Up', 'Single up'], ['Array', 'Array']], { required: true, full: false }));
-      addChips(chips('unitOfMeasure', 'Unit of measure', [['mm', 'mm'], ['in', 'inches']], { required: true, full: false }));
-      add(field({ name: 'width', label: 'Width', required: true, type: 'number', min: '0', step: 'any', inputmode: 'decimal' }));
-      add(field({ name: 'length', label: 'Length', required: true, type: 'number', min: '0', step: 'any', inputmode: 'decimal' }));
-      add(field({ name: 'layers', label: 'Layers', required: true, type: 'number', min: '1', max: '64', step: '1', inputmode: 'numeric', placeholder: 'e.g. 4' }));
-      add(field({ name: 'quantity', label: 'Quantity', required: true, type: 'number', min: '1', step: '1', inputmode: 'numeric', placeholder: 'e.g. 100' }));
-    } else {
-      add(field({ name: 'leadTimeDays', label: 'Lead time', kind: 'select', options: [['', 'No preference']].concat(LEAD_TIMES.map(function (l) { return [l, l + ' days']; })) }));
-      addChips(chips('itarClassification', 'Classification', [
-        ['Commercial', 'Commercial (not ITAR/EAR controlled)'],
-        ['ITAR/EAR', 'ITAR/EAR controlled']
-      ], { required: true }));
-      add(field({ name: 'comment', label: 'Anything else?', kind: 'textarea', placeholder: 'Finish, stackup, impedance, special requirements', full: true }));
-      grid.appendChild(fileField());
-    }
-
-    var status = h('p', { class: 'htcw-err htcw-card-err', role: 'alert', hidden: true });
-    var primary = h('button', { type: 'submit', class: 'htcw-btn htcw-primary', text: step === 3 ? 'Open my quote' : 'Continue' });
-    var actions = h('div', { class: 'htcw-actions' });
-    if (step > 1) actions.appendChild(h('button', { type: 'button', class: 'htcw-btn htcw-ghost', 'data-back': '', text: 'Back' }));
-    actions.appendChild(primary);
-
-    var steps = h('ol', { class: 'htcw-steps', 'aria-label': 'Progress' });
-    STEP_TITLES.forEach(function (t, i) {
-      steps.appendChild(h('li', { class: i + 1 < step ? 'done' : i + 1 === step ? 'now' : '', 'aria-current': i + 1 === step ? 'step' : null, text: t }));
-    });
-
-    // Honeypot: invisible to people, bots fill it. The server drops the request silently if it is non-empty.
-    var trap = h('div', { 'aria-hidden': 'true', style: 'position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden' },
-      h('input', { type: 'text', name: 'website', tabindex: '-1', autocomplete: 'off' }));
-    var card = h('form', { class: 'htcw-card', novalidate: true, 'aria-label': 'Step ' + step + ' of 3: ' + STEP_TITLES[step - 1] },
-      steps, grid, status, actions, trap);
-    activeCard = card;
+    add(field({ name: 'name', label: 'Your name', required: true, autocomplete: 'name', full: true }, draft));
+    add(field({ name: 'company', label: 'Company', required: true, autocomplete: 'organization', full: true }, draft));
+    add(field({ name: 'email', label: 'Work email', type: 'email', required: true, autocomplete: 'email', inputmode: 'email', full: true }, draft));
+    add(field({ name: 'phone', label: 'Phone', required: true, type: 'tel', autocomplete: 'tel', inputmode: 'tel', full: true }, draft));
+    addChips(chips('boardType', 'Board type', CHIP_VALUES.boardType, { required: true }, draft));
+    addChips(chips('singleUpOrArray', 'Single up or array', CHIP_VALUES.singleUpOrArray, { required: true, full: false }, draft));
+    addChips(chips('unitOfMeasure', 'Unit of measure', CHIP_VALUES.unitOfMeasure, { required: true, full: false }, draft));
+    add(field({ name: 'width', label: 'Width', required: true, type: 'number', min: '0', step: 'any', inputmode: 'decimal' }, draft));
+    add(field({ name: 'length', label: 'Length', required: true, type: 'number', min: '0', step: 'any', inputmode: 'decimal' }, draft));
+    add(field({ name: 'layers', label: 'Layers', required: true, type: 'number', min: '1', max: '64', step: '1', inputmode: 'numeric', placeholder: 'e.g. 4' }, draft));
+    add(field({ name: 'quantity', label: 'Quantity', required: true, type: 'number', min: '1', step: '1', inputmode: 'numeric', placeholder: 'e.g. 100' }, draft));
+    add(field({ name: 'leadTimeDays', label: 'Lead time in days', type: 'number', min: '0', max: '365', step: 'any', inputmode: 'decimal', placeholder: 'No preference' }, draft));
+    addChips(chips('itarClassification', 'Classification', CHIP_VALUES.itarClassification, { required: true }, draft));
+    add(field({ name: 'comment', label: 'Anything else?', kind: 'textarea', placeholder: 'Finish, stackup, impedance, special requirements', full: true }, draft));
+    card.appendChild(grid);
+    var save_ = h('button', { type: 'submit', class: 'htcw-btn htcw-primary', text: 'Save changes' });
+    var cancel = h('button', { type: 'button', class: 'htcw-btn htcw-ghost', text: 'Cancel' });
+    card.appendChild(status);
+    card.appendChild(h('div', { class: 'htcw-actions' }, cancel, save_));
 
     function collect() {
-      fields.forEach(function (f) { S.draft[f.name] = f.control.value; });
-      chipSets.forEach(function (c) { S.draft[c.name] = c.value(); });
+      fields.forEach(function (f) { draft[f.name] = f.control.value; });
+      chipSets.forEach(function (c) { draft[c.name] = c.value(); });
       save();
     }
     card.addEventListener('input', collect);
@@ -431,69 +592,59 @@
 
     function validate() {
       var ok = true, firstBad = null;
-      fields.forEach(function (f) { f.clear(); });
-      function bad(f, msg) { f.fail(msg); ok = false; if (!firstBad) firstBad = f.control; }
       fields.forEach(function (f) {
-        var v = f.control.value.trim();
-        if (f.name === 'name' && !v) bad(f, 'Please enter your name.');
-        if (f.name === 'company' && !v) bad(f, 'Please enter your company name.');
-        if (f.name === 'email') {
-          if (!v) bad(f, 'Please enter your email address.');
-          else if (!EMAIL_RE.test(v)) bad(f, 'That email doesn\u2019t look right. Use a format like name@company.com.');
-        }
-        if (f.name === 'phone' && !v) bad(f, 'Please enter a phone number.');
-        if (f.name === 'layers') {
-          if (!v) bad(f, 'Please enter the number of layers.');
-          else if (!(Number(v) >= 1 && Number(v) <= 64 && Number.isInteger(Number(v)))) bad(f, 'Enter a whole number of layers from 1 to 64.');
-        }
-        if (f.name === 'quantity') {
-          if (!v) bad(f, 'Please enter a quantity.');
-          else if (!(Number(v) >= 1 && Number.isInteger(Number(v)))) bad(f, 'Enter a whole quantity of 1 or more.');
-        }
-        if (f.name === 'width' || f.name === 'length') {
-          var noun = f.name === 'width' ? 'width' : 'length';
-          if (!v) bad(f, f.name === 'width' ? 'Please enter the board width.' : 'Please enter the board length.');
-          else if (!(Number(v) > 0 && Number(v) <= 10000)) bad(f, 'Enter a ' + noun + ' greater than 0 and at most 10000.');
-        }
+        f.clear();
+        var msg = fieldProblem(f.name, f.control.value);
+        if (msg) { f.fail(msg); ok = false; if (!firstBad) firstBad = f.control; }
       });
-      var chipMsg = { boardType: 'Please choose a board type.', singleUpOrArray: 'Please choose single up or array.', unitOfMeasure: 'Please choose the unit.', itarClassification: 'Please choose the classification.' };
       chipSets.forEach(function (c) {
         c.clear();
-        if (c.required && !c.value()) { c.fail(chipMsg[c.name]); ok = false; if (!firstBad) firstBad = c.first(); }
+        if (c.required && !c.value()) { c.fail(CHIP_MSG[c.name]); ok = false; if (!firstBad) firstBad = c.first(); }
       });
       if (firstBad) firstBad.focus();
       return ok;
     }
-
-    card.addEventListener('click', function (e) {
-      if (e.target.closest && e.target.closest('[data-back]')) {
-        collect();
-        S.step = Math.max(1, S.step - 1);
-        save();
-        renderForm();
-        focusFirstIn(activeCard);
-      }
-    });
+    function leave() {
+      S.editing = false; S.editDraft = null; save();
+      var c = renderSummary(false);
+      var b = c.querySelector('button[type=submit]');
+      if (b) b.focus({ preventScroll: true });
+    }
+    cancel.addEventListener('click', leave);
     card.addEventListener('submit', function (e) {
       e.preventDefault();
       collect();
       if (!validate()) return;
-      if (step < 3) {
-        S.step = step + 1;
+      var changes = [];
+      var next = {};
+      Object.keys(LABELS).forEach(function (n) {
+        var v = parseValue(n, draft[n]);
+        if (v !== undefined) next[n] = v;
+        if (next[n] !== S.fields[n]) changes.push(n);
+      });
+      S.fields = next;
+      if (changes.length) {
+        var parts = changes.map(function (n) {
+          var v = next[n];
+          if (v === undefined) return LABELS[n] + ' cleared';
+          return LABELS[n] + ' ' + (n === 'comment' ? '\u201c' + String(v).slice(0, 200) + '\u201d' : v);
+        });
+        var entry = { role: 'customer', text: ('Updated: ' + parts.join(', ') + '.').slice(0, MAX_TURN_CHARS), note: true };
+        S.history.push(entry);
+        S.editing = false; S.editDraft = null;
         save();
-        renderForm();
-        focusFirstIn(activeCard);
-        return;
+        removeSummary();
+        disableChips();
+        appendHistory(entry, false);
+        updateProgress();
+        var c = renderSummary(false);
+        var b = c.querySelector('button[type=submit]');
+        if (b) b.focus({ preventScroll: true });
+      } else {
+        leave();
       }
-      submitQuote(primary, status);
     });
     return card;
-  }
-
-  function focusFirstIn(card) {
-    if (!card) return;
-    var f = card.querySelector('input:not([type=radio]), select, textarea, input[type=radio]:checked');
-    if (f) f.focus({ preventScroll: true });
   }
 
   function numOrNull(v) {
@@ -503,23 +654,33 @@
   }
 
   function honeypotValue() {
-    var el = document.querySelector('.htcw-card input[name="website"]');
+    var el = document.querySelector('#htcw input[name="website"]');
     return el ? el.value : '';
   }
 
-  async function submitQuote(button, status) {
-    var d = S.draft;
+  // Confirm: creates the quote (the only write to Salesforce) with the fields and the whole intake as transcript.
+  async function confirmQuote(button, status) {
+    var f = S.fields;
+    var bad = null;
+    ['name', 'company', 'email', 'phone', 'boardType', 'singleUpOrArray', 'unitOfMeasure', 'width', 'length', 'layers', 'quantity', 'itarClassification'].forEach(function (n) {
+      if (!bad && fieldProblem(n, f[n])) bad = fieldProblem(n, f[n]);
+    });
+    if (bad) {
+      status.textContent = bad + ' Use \u201cChange something\u201d to fix it.';
+      status.hidden = false;
+      return;
+    }
     var payload = {
-      name: (d.name || '').trim(), company: (d.company || '').trim(), email: (d.email || '').trim(), phone: (d.phone || '').trim(),
-      boardType: d.boardType, singleUpOrArray: d.singleUpOrArray, unitOfMeasure: d.unitOfMeasure,
-      width: numOrNull(d.width), length: numOrNull(d.length), layers: numOrNull(d.layers),
-      leadTimeDays: numOrNull(d.leadTimeDays), quantity: numOrNull(d.quantity),
-      itarClassification: d.itarClassification, comment: (d.comment || '').trim(),
-      message: (d.comment || '').trim() || null,
+      name: String(f.name).trim(), company: String(f.company).trim(), email: String(f.email).trim(), phone: String(f.phone).trim(),
+      boardType: f.boardType, singleUpOrArray: f.singleUpOrArray, unitOfMeasure: f.unitOfMeasure,
+      width: numOrNull(f.width), length: numOrNull(f.length), layers: numOrNull(f.layers),
+      leadTimeDays: numOrNull(f.leadTimeDays), quantity: numOrNull(f.quantity),
+      itarClassification: f.itarClassification, comment: String(f.comment || '').trim(),
+      transcript: S.history.slice(-SEND_TRANSCRIPT).map(function (e) { return { role: e.role, text: String(e.text).slice(0, MAX_TURN_CHARS) }; }),
       website: honeypotValue()
     };
     // files follow right after: the last upload (not quote creation) wakes the assistant, so it answers once
-    if (formFiles.length) payload.filesPending = true;
+    if (heldFiles.length) payload.filesPending = true;
     status.hidden = true;
     button.disabled = true;
     button.textContent = 'Opening your quote…';
@@ -527,47 +688,50 @@
       var res = await fetch('/api/quote', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       var result = await res.json();
       if (!result.success) throw new Error(result.errorMessage || 'Quote creation failed');
-      startChat(result, payload);
+      startChat(result);
     } catch (err) {
       status.textContent = 'We couldn\u2019t open your quote: ' + (err && err.message ? err.message : 'network error') + '. Please try again.';
       status.hidden = false;
       button.disabled = false;
-      button.textContent = 'Open my quote';
+      button.textContent = 'Confirm';
     }
   }
 
   // ---------- chat phase ----------
-  function startChat(result, payload) {
+  function startChat(result) {
+    intakeToken++;
     S.quoteId = result.quoteId;
     S.conversationId = result.conversationId;
     S.phase = 'chat';
     S.seen = [];
-    pollAfter = null;
-    S.thread = [];
-    var d = S.draft;
-    var bits = [d.boardType, d.layers + ' layers'];
-    if (payload.quantity) bits.push('qty ' + payload.quantity);
-    if (payload.width && payload.length) bits.push(payload.width + ' \u00d7 ' + payload.length + ' ' + d.unitOfMeasure);
-    if (payload.leadTimeDays) bits.push(payload.leadTimeDays + '-day lead time');
-    bits.push(d.itarClassification);
-    S.thread.push({ who: 'agent', sender: ASSISTANT, text: 'Thanks' + (d.name ? ', ' + d.name.trim().split(/\s+/)[0] : '') + '. Your quote request is open with HT Global.' });
-    S.thread.push({ who: 'user', text: 'Quote request for ' + payload.company + ': ' + bits.join(' \u00b7 ') });
-    if (payload.comment) S.thread.push({ who: 'user', text: payload.comment });
-    S.thread.push({ who: 'agent', sender: ASSISTANT, text: 'Tell me anything else about the job, like finish, stackup, impedance or delivery. I\u2019ll reply here, and our team can join in too.' });
+    // Messages created with the quote (the intake transcript) are older than this: the poller never replays them.
+    S.baseline = result.serverTime || new Date().toISOString();
+    pollAfter = S.baseline;
+    S.thread = S.history.map(function (e) {
+      return e.role === 'assistant' ? { who: 'agent', sender: ASSISTANT, text: e.text } : { who: 'user', text: e.text };
+    });
+    var first = firstName();
+    S.thread.push({ who: 'agent', sender: ASSISTANT, text: 'Thanks' + (first ? ', ' + first : '') + '. Your quote request is open with HT Global. I\u2019ll reply here, and our team can join in too.' });
+    S.history = []; S.complete = false; S.missing = []; S.editing = false; S.editDraft = null;
     S.pendingSince = Date.now();
     save();
+    summaryEl = null;
+    input.placeholder = 'Type your message…';
+    updateProgress();
     renderChat();
     schedulePoll(POLL_FAST_MS);
     updateTyping();
     input.focus();
-    if (formFiles.length) uploadBatch(formFiles.splice(0, formFiles.length), true);
+    if (heldFiles.length) uploadBatch(heldFiles.splice(0, heldFiles.length), true);
   }
 
   function renderChat() {
-    activeCard = null;
     log.textContent = '';
     S.thread.forEach(function (e) { log.appendChild(bubble(e)); });
     composer.hidden = false;
+    input.placeholder = 'Type your message…';
+    fileTray.textContent = ''; fileTray.hidden = true;
+    updateProgress();
     scrollDown();
     updateTyping();
   }
@@ -576,7 +740,7 @@
   function updateTyping() {
     clearTimeout(typingTimer);
     typingTimer = null;
-    if (S.phase !== 'chat' || !S.pendingSince) { typing.hidden = true; return; }
+    if (S.phase !== 'chat' || !S.pendingSince) { if (!intakeBusy) typing.hidden = true; return; }
     var left = TYPING_MAX_MS - (Date.now() - S.pendingSince);
     if (left <= 0) {
       S.pendingSince = null;
@@ -592,6 +756,13 @@
   var sending = false;
   composer.addEventListener('submit', async function (e) {
     e.preventDefault();
+    if (S.phase === 'intake') {
+      var t = input.value.trim();
+      if (!t) return;
+      composerErr.hidden = true;
+      sendCustomer(t);
+      return;
+    }
     if (sending || !S.conversationId) return;
     var text = input.value.trim();
     if (!text) return;
@@ -762,16 +933,26 @@
 
   clipBtn.addEventListener('click', function () { if (!uploadsBusy) fileInput.click(); });
   fileInput.addEventListener('change', function () {
-    var res = pickFiles(Array.prototype.slice.call(fileInput.files || []), 0);
+    var intake = S.phase !== 'chat';
+    var res = pickFiles(Array.prototype.slice.call(fileInput.files || []), intake ? heldFiles.length : 0);
     fileInput.value = '';
     if (res.errors.length) { composerErr.textContent = res.errors.join(' '); composerErr.hidden = false; }
     else composerErr.hidden = true;
-    if (res.ok.length) uploadBatch(res.ok);
+    if (!res.ok.length) return;
+    if (intake) {
+      // the quote does not exist yet: hold the files and upload them right after Confirm
+      res.ok.forEach(function (f) { heldFiles.push(f); });
+      heldTray();
+      if (summaryEl && !S.editing) renderSummary(false);
+      announce(res.ok.length + (res.ok.length === 1 ? ' file' : ' files') + ' added. ' + (res.ok.length === 1 ? 'It' : 'They') + ' will be sent when you confirm.');
+    } else {
+      uploadBatch(res.ok);
+    }
   });
 
   // ---------- polling (T5 logic) ----------
   var pollTimer = null;
-  var pollAfter = null;
+  var pollAfter = S.baseline || null; // the intake transcript is older than the baseline: never replayed from the server
   var lastActivity = Date.now();
   var polling = false;
   var unread = 0;
@@ -813,7 +994,7 @@
         }
         if (S.seen.length > 500) S.seen = S.seen.slice(-500);
         save();
-        if (result.serverTime) pollAfter = new Date(new Date(result.serverTime).getTime() - 10000).toISOString();
+        if (result.serverTime) pollAfter = new Date(Math.max(new Date(result.serverTime).getTime() - 10000, S.baseline ? new Date(S.baseline).getTime() : 0)).toISOString();
       }
     } catch (e) {
       // transient: retry on the next tick
@@ -846,11 +1027,11 @@
     launcher.setAttribute('aria-expanded', 'true');
     unread = 0; renderBadge();
     tip.classList.remove('htcw-tip-show');
-    if (S.phase === 'form' && S.intro === 0) renderForm();
+    resumeIntake();
     scrollDown();
     if (opts.focus !== false) {
       setTimeout(function () {
-        if (S.phase === 'chat') input.focus(); else focusFirstIn(activeCard);
+        input.focus();
       }, 30);
     }
     if (S.conversationId) schedulePoll(0);
@@ -920,18 +1101,21 @@
   function resetAll() {
     clearTimeout(pollTimer); pollTimer = null;
     clearTimeout(typingTimer); typingTimer = null;
-    clearTimeout(introTimer); introTimer = null;
+    intakeToken++;
+    intakeBusy = false;
+    retryEl = null;
     var wasOpen = isOpen;
     S = freshState();
     S.open = wasOpen;
     pollAfter = null; unread = 0; renderBadge();
     input.value = ''; autoGrow();
     composerErr.hidden = true;
-    formFiles = [];
-    fileTray.textContent = ''; trayVisibility();
+    heldFiles = [];
+    fileTray.textContent = ''; fileTray.hidden = true;
+    sendBtn.disabled = false;
     save();
-    renderForm();
-    if (wasOpen && S.intro >= 3) focusFirstIn(activeCard);
+    renderIntake();
+    if (wasOpen) { resumeIntake(); input.focus(); }
   }
 
   // Escape + focus trap
@@ -959,18 +1143,18 @@
   function boot() {
     document.body.appendChild(root);
     if (S.phase === 'chat' && S.conversationId) {
-      // re-render local history, then reconcile with the server (GET without "after" returns everything)
+      // re-render local history, then reconcile with the server (only what is newer than the intake transcript)
       renderChat();
       lastActivity = Date.now();
       schedulePoll(0);
     } else {
-      S.phase = 'form';
-      renderForm();
+      S.phase = 'intake';
+      renderIntake();
     }
     if (S.open === true) open({ focus: false }); // restore a panel that was open before the reload
     else if (autoOpen && S.open !== false) {
       // /quote opens the assistant by itself, but only once the page is loaded and visible,
-      // so the visitor actually sees the assistant introduce the form.
+      // so the visitor actually sees the assistant start the conversation.
       var openWhenSeen = function () {
         if (document.visibilityState !== 'visible') {
           document.addEventListener('visibilitychange', openWhenSeen, { once: true });

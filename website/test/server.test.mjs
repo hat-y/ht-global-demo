@@ -511,7 +511,6 @@ test('widget marks every field required in HT Instant Quote as required and the 
     const line = js.split('\n').find((l) => l.includes(`name: '${name}'`));
     assert.ok(line && !/required: true/.test(line), name);
   }
-  assert.match(js, /h\('label', \{ for: id \}, 'Drawings, stack-up or Gerbers', h\('span', \{ class: 'htcw-opt', text: ' \(optional\)' \}\)\)/);
   for (const msg of ['Please enter the number of layers.', 'Please enter the board width.', 'Please enter the board length.', 'Please choose single up or array.', 'Please choose the unit.', 'Please enter a phone number.', 'Please choose the classification.']) {
     assert.ok(js.includes(msg), msg);
   }

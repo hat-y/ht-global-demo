@@ -96,4 +96,21 @@ private class HtPcbQuoteResourceTest {
         System.assertEquals(true, HtPcbQuoteResource.appendMessage().success);
         System.assertEquals(true, [SELECT PCB_Gerbers_Received__c FROM Quote WHERE Id = :created.quoteId].PCB_Gerbers_Received__c);
     }
+
+    @IsTest
+    static void post_withTranscript_storesTheWholeIntakeBeforeTheFormSummary() {
+        callWith('POST', '{"name":"Tia Script","company":"Script Boards","email":"tia@scriptboards.example","boardType":"Rigid PCB","quantity":5,'
+            + '"transcript":[{"role":"assistant","text":"Hello! Who am I talking to?"},{"role":"customer","text":"Tia from Script Boards"}]}');
+        HtPcbQuoteResult created = HtPcbQuoteResource.createQuote();
+        System.assertEquals(true, created.success, created.errorMessage == null ? 'ok' : created.errorMessage);
+        List<ConversationMessage__c> rows = [
+            SELECT Body__c, IsInbound__c FROM ConversationMessage__c
+            WHERE Conversation__c = :created.conversationId ORDER BY CreatedDate ASC, Id ASC
+        ];
+        System.assertEquals(3, rows.size());
+        System.assertEquals('Hello! Who am I talking to?', rows[0].Body__c);
+        System.assertEquals(false, rows[0].IsInbound__c);
+        System.assertEquals('Tia from Script Boards', rows[1].Body__c);
+        System.assert(rows[2].Body__c.startsWith('PCB Instant Quote request'), rows[2].Body__c);
+    }
 }

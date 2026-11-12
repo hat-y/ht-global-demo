@@ -59,3 +59,6 @@ odd/
 
 # Design canvas work (real-UI screenshots, internal notes); kept local
 design/
+
+# Playwright MCP session artefacts
+.playwright-mcp/

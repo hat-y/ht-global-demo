@@ -27,13 +27,18 @@ export function makePublicDir() {
 }
 
 export async function start(overrides = {}) {
-  const calls = { sf: [], notify: [], logs: [], upload: [] };
+  const calls = { sf: [], notify: [], logs: [], upload: [], intake: [] };
   const deps = {
     callSalesforce: async (method, body, query) => {
       calls.sf.push({ method, body, query });
       if (overrides.sfImpl) return overrides.sfImpl(method, body, query);
       if (method === 'GET') return { success: true, messages: [] };
       return { success: true, conversationId: CID, quoteId: QID };
+    },
+    callIntake: async (payload) => {
+      calls.intake.push(payload);
+      if (overrides.intakeImpl) return overrides.intakeImpl(payload);
+      return { reply: 'Hello!', quickReplies: [], fieldUpdates: {} };
     },
     uploadFile: async (file) => {
       calls.upload.push(file);

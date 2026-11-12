@@ -173,6 +173,12 @@ async function callSalesforceJwt(method, body, query) {
 // ---------------------------------------------------------------------------
 
 const MAX_BODY_BYTES = 16 * 1024;
+// Bodies that carry a chat transcript (up to 60 x 2000 chars) or an intake history are larger.
+const MAX_TRANSCRIPT_BODY_BYTES = 512 * 1024;
+const MAX_TRANSCRIPT_ITEMS = 60;
+const MAX_HISTORY_ITEMS = 30;
+const MAX_TURN_CHARS = 2000;
+const INTAKE_TIMEOUT_MS = 15000;
 // Default 5 MB per file: the demo org (Developer Edition) has 20 MB of file storage in total.
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const TEN_MIN = 10 * 60 * 1000;
@@ -237,6 +243,7 @@ export function configFromEnv(env = process.env) {
       patch: { max: num('RATE_PATCH_MAX', 30), windowMs: num('RATE_PATCH_WINDOW_SEC', 600) * 1000 },
       messages: { max: num('RATE_MESSAGES_MAX', 120), windowMs: num('RATE_MESSAGES_WINDOW_SEC', 60) * 1000 },
       upload: { max: num('RATE_UPLOAD_MAX', 10), windowMs: num('RATE_UPLOAD_WINDOW_SEC', 600) * 1000 },
+      intake: { max: num('RATE_INTAKE_MAX', 60), windowMs: num('RATE_INTAKE_WINDOW_SEC', 600) * 1000 },
       maxTrackedIps: num('RATE_MAX_TRACKED_IPS', 10000)
     },
     upload: {
@@ -328,15 +335,101 @@ function size(body, key, label) {
   return v;
 }
 
-// Required set mirrors HT's Instant Quote form. Checked in form order so the first missing field is reported.
-// Optional: leadTimeDays, comment/message (and files, which have their own endpoint).
+// ---- field rules shared by POST /api/quote and POST /api/intake ----
+// Required set mirrors HT's Instant Quote form, in form order. Optional: leadTimeDays, comment.
+const REQUIRED_ORDER = ['name', 'company', 'email', 'phone', 'boardType', 'singleUpOrArray', 'unitOfMeasure', 'width', 'length', 'layers', 'quantity', 'itarClassification'];
+const FIELD_NAMES = [...REQUIRED_ORDER, 'leadTimeDays', 'comment'];
+const ENUMS = {
+  boardType: ['Rigid PCB', 'Flex PCB', 'Rigid-Flex PCB', 'HDI PCB', 'Metal Core PCB', 'High Frequency PCB'],
+  singleUpOrArray: ['Single Up', 'Array'],
+  unitOfMeasure: ['mm', 'inches'],
+  itarClassification: ['Commercial', 'ITAR/EAR']
+};
+const ENUM_ALIASES = {
+  unitOfMeasure: { in: 'inches', inch: 'inches', millimeters: 'mm', millimetres: 'mm', millimeter: 'mm', millimetre: 'mm' },
+  singleUpOrArray: { 'single-up': 'Single Up', single: 'Single Up', singleup: 'Single Up', panel: 'Array', panelized: 'Array' },
+  itarClassification: { itar: 'ITAR/EAR', ear: 'ITAR/EAR', 'itar/ear controlled': 'ITAR/EAR', 'itar / ear': 'ITAR/EAR' }
+};
+function matchEnum(name, value) {
+  if (typeof value !== 'string') return undefined;
+  const v = value.trim().toLowerCase();
+  const hit = ENUMS[name].find((e) => e.toLowerCase() === v);
+  if (hit) return hit;
+  const alias = ENUM_ALIASES[name] && ENUM_ALIASES[name][v];
+  if (alias) return alias;
+  if (name === 'boardType') return ENUMS.boardType.find((e) => e.toLowerCase() === `${v} pcb`);
+  return undefined;
+}
+// One rule per field: takes the body and the key, returns the normalized value or throws HttpError.
+const FIELD_RULES = {
+  name: (b, k) => str(b, k, 120, { required: true }),
+  company: (b, k) => str(b, k, 120, { required: true }),
+  email: (b, k) => {
+    const email = str(b, k, 254 + 1, { required: false });
+    if (!email || email.length > 254 || !EMAIL.test(email)) throw new HttpError(400, 'A valid email is required.');
+    return email;
+  },
+  phone: (b, k) => str(b, k, 40),
+  boardType: (b, k) => str(b, k, 80),
+  singleUpOrArray: (b, k) => str(b, k, 80),
+  unitOfMeasure: (b, k) => str(b, k, 80),
+  itarClassification: (b, k) => str(b, k, 80),
+  width: (b, k) => size(b, k, 'Width'),
+  length: (b, k) => size(b, k, 'Length'),
+  layers: (b, k) => num(b, k, 1, 64, { integer: true }),
+  quantity: (b, k) => num(b, k, 1, 1000000, { integer: true }),
+  leadTimeDays: (b, k) => num(b, k, 0, 365),
+  comment: (b, k) => str(b, k, 2000)
+};
+
+// Validates one field for the intake: returns the normalized value, or undefined when it is not acceptable.
+function intakeField(name, raw) {
+  if (raw == null || (typeof raw !== 'string' && typeof raw !== 'number')) return undefined;
+  try {
+    let value = raw;
+    if (ENUMS[name]) {
+      value = matchEnum(name, raw);
+      if (value === undefined) return undefined;
+    }
+    return FIELD_RULES[name]({ [name]: value }, name);
+  } catch {
+    return undefined;
+  }
+}
+function normalizeIntakeFields(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const name of FIELD_NAMES) {
+    if (!Object.prototype.hasOwnProperty.call(raw, name)) continue;
+    const v = intakeField(name, raw[name]);
+    if (v !== undefined) out[name] = v;
+  }
+  return out;
+}
+function missingFields(fields) {
+  return REQUIRED_ORDER.filter((k) => fields[k] === undefined);
+}
+
+function validateTranscript(raw) {
+  if (raw == null) return undefined;
+  if (!Array.isArray(raw)) throw new HttpError(400, 'transcript must be an array.');
+  if (raw.length > MAX_TRANSCRIPT_ITEMS) throw new HttpError(400, `transcript must have at most ${MAX_TRANSCRIPT_ITEMS} items.`);
+  const out = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || (item.role !== 'assistant' && item.role !== 'customer')) throw new HttpError(400, 'transcript role must be assistant or customer.');
+    if (typeof item.text !== 'string') throw new HttpError(400, 'transcript text must be a string.');
+    if (item.text.length > MAX_TURN_CHARS) throw new HttpError(400, `transcript text must be at most ${MAX_TURN_CHARS} characters.`);
+    const text = item.text.trim();
+    if (text) out.push({ role: item.role, text });
+  }
+  return out;
+}
+
 function validateQuote(body) {
   const out = {};
-  out.name = str(body, 'name', 120, { required: true });
-  out.company = str(body, 'company', 120, { required: true });
-  const email = str(body, 'email', 254 + 1, { required: false });
-  if (!email || email.length > 254 || !EMAIL.test(email)) throw new HttpError(400, 'A valid email is required.');
-  out.email = email;
+  out.name = FIELD_RULES.name(body, 'name');
+  out.company = FIELD_RULES.company(body, 'company');
+  out.email = FIELD_RULES.email(body, 'email');
   requireField(body, 'phone', 'Phone');
   requireField(body, 'boardType', 'Board type');
   requireField(body, 'singleUpOrArray', 'Single up or array');
@@ -346,17 +439,121 @@ function validateQuote(body) {
   requireField(body, 'layers', 'Layers');
   requireField(body, 'quantity', 'Quantity');
   requireField(body, 'itarClassification', 'Classification');
-  out.phone = str(body, 'phone', 40);
-  out.comment = str(body, 'comment', 2000);
+  out.phone = FIELD_RULES.phone(body, 'phone');
+  out.comment = FIELD_RULES.comment(body, 'comment');
   out.message = str(body, 'message', 2000);
-  for (const k of ['boardType', 'singleUpOrArray', 'unitOfMeasure', 'itarClassification']) out[k] = str(body, k, 80);
-  out.width = size(body, 'width', 'Width');
-  out.length = size(body, 'length', 'Length');
-  out.layers = num(body, 'layers', 1, 64, { integer: true });
-  out.quantity = num(body, 'quantity', 1, 1000000, { integer: true });
-  out.leadTimeDays = num(body, 'leadTimeDays', 0, 365);
+  for (const k of ['boardType', 'singleUpOrArray', 'unitOfMeasure', 'itarClassification']) out[k] = FIELD_RULES[k](body, k);
+  out.width = FIELD_RULES.width(body, 'width');
+  out.length = FIELD_RULES.length(body, 'length');
+  out.layers = FIELD_RULES.layers(body, 'layers');
+  out.quantity = FIELD_RULES.quantity(body, 'quantity');
+  out.leadTimeDays = FIELD_RULES.leadTimeDays(body, 'leadTimeDays');
+  out.transcript = validateTranscript(body.transcript);
   for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
   return out;
+}
+
+// ---- conversational intake (POST /api/intake) ----
+const FALLBACK_PROMPTS = {
+  name: 'What\u2019s your name?',
+  company: 'Which company are you with?',
+  email: 'What\u2019s your work email?',
+  phone: 'What\u2019s the best phone number to reach you?',
+  boardType: 'What type of board do you need?',
+  singleUpOrArray: 'Do you need single up or an array?',
+  unitOfMeasure: 'Will you give the board size in mm or inches?',
+  width: 'What\u2019s the board width? Just the number, in the unit you chose.',
+  length: 'And the board length?',
+  layers: 'How many layers? A whole number from 1 to 64.',
+  quantity: 'How many boards do you need?',
+  itarClassification: 'Last required detail: is this job Commercial or ITAR/EAR controlled?'
+};
+const FALLBACK_GREETING = 'Hi! I\u2019m the HT Global quote assistant. I\u2019ll ask a few quick questions to get your quote started. ';
+const FALLBACK_COMPLETE = 'I have everything I need. Please check the summary below and confirm when it looks right.';
+const fallbackQuickReplies = (name) => (ENUMS[name] || []).map((v) => ({ label: v, value: v }));
+
+// Deterministic reply used when the AI agent is unavailable: never a dead end. If the last assistant
+// turn was this fallback's own question, the customer's answer is parsed for that field.
+function intakeFallback({ history, fields, message }) {
+  const merged = { ...fields };
+  const target = missingFields(merged)[0];
+  let prefix = '';
+  if (target) {
+    const lastAssistant = [...history].reverse().find((t) => t.role === 'assistant');
+    const asked = lastAssistant && lastAssistant.text.endsWith(FALLBACK_PROMPTS[target]);
+    if (message != null && asked) {
+      const v = intakeField(target, message);
+      if (v !== undefined) merged[target] = v;
+      else prefix = 'Sorry, I didn\u2019t catch that. ';
+    } else if (message != null) {
+      prefix = 'Sorry, I had a hiccup. ';
+    } else if (!history.length) {
+      prefix = FALLBACK_GREETING;
+    }
+  }
+  const next = missingFields(merged)[0];
+  if (!next) return { reply: FALLBACK_COMPLETE, quickReplies: [], fieldUpdates: merged };
+  return { reply: prefix + FALLBACK_PROMPTS[next], quickReplies: fallbackQuickReplies(next), fieldUpdates: merged };
+}
+
+const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+function cleanText(v, max) {
+  return typeof v === 'string' ? v.replace(CONTROL_CHARS, '').trim().slice(0, max) : '';
+}
+function cleanQuickReplies(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const item of raw) {
+    const label = cleanText(typeof item === 'string' ? item : item && item.label, 40);
+    const value = cleanText(typeof item === 'string' ? item : item && (item.value ?? item.label), 200) || label;
+    if (label && value && !out.some((q) => q.label === label)) out.push({ label, value });
+    if (out.length >= 7) break;
+  }
+  return out;
+}
+
+function validateIntake(body) {
+  const history = [];
+  if (body.history != null) {
+    if (!Array.isArray(body.history)) throw new HttpError(400, 'history must be an array.');
+    if (body.history.length > MAX_HISTORY_ITEMS) throw new HttpError(400, `history must have at most ${MAX_HISTORY_ITEMS} items.`);
+    for (const t of body.history) {
+      if (!t || typeof t !== 'object' || (t.role !== 'assistant' && t.role !== 'customer')) throw new HttpError(400, 'history role must be assistant or customer.');
+      if (typeof t.text !== 'string') throw new HttpError(400, 'history text must be a string.');
+      if (t.text.length > MAX_TURN_CHARS) throw new HttpError(400, `history text must be at most ${MAX_TURN_CHARS} characters.`);
+      history.push({ role: t.role, text: t.text });
+    }
+  }
+  let message = null;
+  if (body.message != null) {
+    if (typeof body.message !== 'string') throw new HttpError(400, 'message must be a string or null.');
+    if (body.message.length > MAX_TURN_CHARS) throw new HttpError(400, `message must be at most ${MAX_TURN_CHARS} characters.`);
+    message = body.message.trim();
+    if (!message) throw new HttpError(400, 'message must not be empty.');
+  }
+  let fields = {};
+  if (body.fields != null) {
+    if (typeof body.fields !== 'object' || Array.isArray(body.fields)) throw new HttpError(400, 'fields must be an object.');
+    const unknown = Object.keys(body.fields).filter((k) => !FIELD_NAMES.includes(k));
+    if (unknown.length) throw new HttpError(400, `Unknown field: ${unknown[0].slice(0, 40)}.`);
+    fields = normalizeIntakeFields(body.fields);
+  }
+  return { history, fields, message };
+}
+
+// Default n8n call: POST N8N_INTAKE_WEBHOOK_URL (synchronous answer), 15 s timeout.
+async function callIntakeWebhook(payload) {
+  const url = process.env.N8N_INTAKE_WEBHOOK_URL || '';
+  const secret = process.env.N8N_AGENT_SECRET || '';
+  if (!url || !secret) throw new Error('intake webhook not configured');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-HT-Agent-Secret': secret },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(INTAKE_TIMEOUT_MS)
+  });
+  if (!res.ok) throw new Error(`intake webhook status ${res.status}`);
+  return res.json();
 }
 
 function validateIds(src) {
@@ -375,16 +572,18 @@ function validatePatch(body) {
   return { ...ids, message };
 }
 
-async function readJsonBody(req) {
+// max: hard cap while reading. softMax(parsed): optional second check once the body is parsed
+// (a plain quote stays at 16 KB; only bodies with a transcript may be larger).
+async function readJsonBody(req, max = MAX_BODY_BYTES, softMax) {
   const type = String(req.headers['content-type'] || '').toLowerCase();
   if (!/^application\/json\s*(;|$)/.test(type)) throw new HttpError(415, 'Content-Type must be application/json.');
   const declared = Number(req.headers['content-length']);
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new HttpError(413, 'Request body too large.');
+  if (Number.isFinite(declared) && declared > max) throw new HttpError(413, 'Request body too large.');
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, 'Request body too large.');
+    if (size > max) throw new HttpError(413, 'Request body too large.');
     chunks.push(chunk);
   }
   if (!chunks.length) return {};
@@ -395,6 +594,7 @@ async function readJsonBody(req) {
     throw new HttpError(400, 'Invalid JSON body.');
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new HttpError(400, 'Request body must be a JSON object.');
+  if (softMax && size > softMax(parsed)) throw new HttpError(413, 'Request body too large.');
   return parsed;
 }
 
@@ -555,7 +755,7 @@ function resolveStatic(publicDir, pathname) {
   return absolute;
 }
 
-export function createServer({ callSalesforce, uploadFile = uploadFileUnsupported, notifyAgent: notify = () => {}, now = () => Date.now(), log = (line) => console.log(line), config = {} } = {}) {
+export function createServer({ callSalesforce, callIntake = callIntakeWebhook, uploadFile = uploadFileUnsupported, notifyAgent: notify = () => {}, now = () => Date.now(), log = (line) => console.log(line), config = {} } = {}) {
   const defaults = configFromEnv({});
   const cfg = {
     publicDir: config.publicDir || path.join(__dirname, 'public'),
@@ -565,6 +765,7 @@ export function createServer({ callSalesforce, uploadFile = uploadFileUnsupporte
       patch: { ...defaults.limits.patch, ...(config.limits && config.limits.patch) },
       messages: { ...defaults.limits.messages, ...(config.limits && config.limits.messages) },
       upload: { ...defaults.limits.upload, ...(config.limits && config.limits.upload) },
+      intake: { ...defaults.limits.intake, ...(config.limits && config.limits.intake) },
       maxTrackedIps: (config.limits && config.limits.maxTrackedIps) || defaults.limits.maxTrackedIps
     },
     upload: { ...defaults.upload, ...(config.upload || {}) }
@@ -633,7 +834,7 @@ export function createServer({ callSalesforce, uploadFile = uploadFileUnsupporte
       if (pathname === '/api/quote') {
         if (req.method !== 'POST' && req.method !== 'PATCH') return fail(res, 405, 'Method not allowed.', { Allow: 'POST, PATCH' });
         if (limited(req, res, req.method === 'POST' ? 'post' : 'patch')) return;
-        const body = await readJsonBody(req);
+        const body = await readJsonBody(req, MAX_TRANSCRIPT_BODY_BYTES, (p) => (p.transcript != null ? MAX_TRANSCRIPT_BODY_BYTES : MAX_BODY_BYTES));
         if (typeof body.website === 'string' ? body.website.trim() !== '' : body.website != null && body.website !== false) {
           return send(res, 200, { success: true }); // honeypot: pretend it worked
         }
@@ -650,6 +851,35 @@ export function createServer({ callSalesforce, uploadFile = uploadFileUnsupporte
         if (!data) return;
         notify('customer_message', patch.conversationId, patch.quoteId);
         return send(res, 200, data);
+      }
+
+      if (pathname === '/api/intake') {
+        if (req.method !== 'POST') return fail(res, 405, 'Method not allowed.', { Allow: 'POST' });
+        if (limited(req, res, 'intake')) return;
+        const body = await readJsonBody(req, MAX_TRANSCRIPT_BODY_BYTES);
+        if (typeof body.website === 'string' ? body.website.trim() !== '' : body.website != null && body.website !== false) {
+          return send(res, 200, { success: true, reply: '', quickReplies: [], fields: {}, missing: REQUIRED_ORDER.slice(), complete: false }); // honeypot
+        }
+        const input = validateIntake(body);
+        let answer = null;
+        try {
+          answer = await callIntake({ history: input.history, fields: input.fields, message: input.message });
+          if (!answer || typeof answer !== 'object' || !cleanText(answer.reply, 1500)) throw new Error('intake answer without a reply');
+        } catch (error) {
+          emit({ level: 'warn', msg: 'intake_fallback', detail: String((error && error.message) || error).slice(0, 300) });
+          answer = intakeFallback(input);
+        }
+        // never trust the agent: fieldUpdates go through the same rules as POST /api/quote; missing/complete are computed here
+        const fields = { ...input.fields, ...normalizeIntakeFields(answer.fieldUpdates) };
+        const missing = missingFields(fields);
+        return send(res, 200, {
+          success: true,
+          reply: cleanText(answer.reply, 1500),
+          quickReplies: cleanQuickReplies(answer.quickReplies),
+          fields,
+          missing,
+          complete: missing.length === 0
+        }, { 'Cache-Control': 'no-store' });
       }
 
       if (pathname === '/api/quote/files') {

@@ -377,6 +377,80 @@ private class HtPcbQuoteServiceTest {
         System.assertEquals('Decision Maker', roles[0].Role);
     }
 
+    private static HtPcbQuoteService.TranscriptItem turn(String role, String text) {
+        HtPcbQuoteService.TranscriptItem t = new HtPcbQuoteService.TranscriptItem();
+        t.role = role;
+        t.text = text;
+        return t;
+    }
+
+    @IsTest
+    static void startQuote_transcriptComesFirstThenTheFormSummary() {
+        HtPcbQuoteService.QuoteRequest req = fullRequest('transcript@example.com');
+        req.transcript = new List<HtPcbQuoteService.TranscriptItem>{
+            turn('assistant', 'Hi! What kind of board do you need?'),
+            turn('customer', 'A rigid board, 4 layers'),
+            turn('assistant', 'Great. How many pieces?')
+        };
+        HtPcbQuoteResult res = HtPcbQuoteService.startQuote(req);
+        System.assertEquals(true, res.success, errOf(res));
+
+        List<ConversationMessage__c> rows = [
+            SELECT Body__c, IsInbound__c, IsAgentMessage__c, IsHumanMessage__c, SenderDisplayName__c
+            FROM ConversationMessage__c
+            WHERE Conversation__c = :res.conversationId
+            ORDER BY CreatedDate ASC, Id ASC
+        ];
+        System.assertEquals(4, rows.size());
+        System.assertEquals('Hi! What kind of board do you need?', rows[0].Body__c);
+        System.assertEquals(false, rows[0].IsInbound__c);
+        System.assertEquals(true, rows[0].IsAgentMessage__c);
+        System.assertEquals('HT Global assistant', rows[0].SenderDisplayName__c);
+        System.assertEquals('A rigid board, 4 layers', rows[1].Body__c);
+        System.assertEquals(true, rows[1].IsInbound__c);
+        System.assertEquals(false, rows[1].IsAgentMessage__c);
+        System.assertEquals('Alex Rivera', rows[1].SenderDisplayName__c);
+        System.assertEquals('Great. How many pieces?', rows[2].Body__c);
+        System.assertEquals(true, rows[2].IsAgentMessage__c);
+        System.assert(rows[3].Body__c.startsWith('PCB Instant Quote request\n'), rows[3].Body__c);
+        System.assertEquals(true, rows[3].IsInbound__c);
+        System.assertNotEquals(null, res.serverTime);
+    }
+
+    @IsTest
+    static void startQuote_transcriptCapsAreEnforcedAndNothingIsCreated() {
+        List<HtPcbQuoteService.TranscriptItem> tooMany = new List<HtPcbQuoteService.TranscriptItem>();
+        for (Integer i = 0; i < 61; i++) {
+            tooMany.add(turn('customer', 'm' + i));
+        }
+        List<List<HtPcbQuoteService.TranscriptItem>> bad = new List<List<HtPcbQuoteService.TranscriptItem>>{
+            tooMany,
+            new List<HtPcbQuoteService.TranscriptItem>{ turn('customer', 'x'.repeat(2001)) },
+            new List<HtPcbQuoteService.TranscriptItem>{ turn('robot', 'hello') }
+        };
+        for (List<HtPcbQuoteService.TranscriptItem> items : bad) {
+            HtPcbQuoteService.QuoteRequest req = fullRequest('cap@example.com');
+            req.transcript = items;
+            HtPcbQuoteResult res = HtPcbQuoteService.startQuote(req);
+            System.assertEquals(false, res.success);
+            System.assert(errOf(res).startsWith('transcript'), errOf(res));
+        }
+        System.assertEquals(0, [SELECT COUNT() FROM Quote]);
+        System.assertEquals(0, [SELECT COUNT() FROM Conversation__c]);
+
+        // exactly at the caps is fine (60 items, 2000 chars), blank entries are skipped
+        List<HtPcbQuoteService.TranscriptItem> ok = new List<HtPcbQuoteService.TranscriptItem>();
+        for (Integer i = 0; i < 59; i++) {
+            ok.add(turn(Math.mod(i, 2) == 0 ? 'assistant' : 'customer', 'm' + i));
+        }
+        ok.add(turn('customer', 'y'.repeat(2000)));
+        HtPcbQuoteService.QuoteRequest good = fullRequest('capok@example.com');
+        good.transcript = ok;
+        HtPcbQuoteResult res2 = HtPcbQuoteService.startQuote(good);
+        System.assertEquals(true, res2.success, errOf(res2));
+        System.assertEquals(61, [SELECT COUNT() FROM ConversationMessage__c WHERE Conversation__c = :res2.conversationId]);
+    }
+
     @IsTest
     static void startQuote_requiresQuantity() {
         for (Decimal q : new List<Decimal>{ null, 0, -3 }) {
