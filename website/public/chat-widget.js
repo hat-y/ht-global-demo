@@ -31,7 +31,8 @@
   var MAX_TURN_CHARS = 2000;
   var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
   var BOARD_TYPES = ['Rigid PCB', 'Flex PCB', 'Rigid-Flex PCB', 'HDI PCB', 'Metal Core PCB', 'High Frequency PCB'];
-  var OPTIONAL_FIELDS = ['leadTimeDays', 'comment']; // asked after the required ones; the summary waits for them
+  var FILES_ACTION = 'Attach files'; // the quick-reply value that opens the file picker
+  var OPTIONAL_FIELDS = ['leadTimeDays', 'comment', 'files']; // asked after the required ones; the summary waits for them
   var REQUIRED_COUNT = 12; // name, company, email, phone, board type, single up/array, unit, width, length, layers, quantity, classification
   var NUMERIC = { width: 1, length: 1, layers: 1, quantity: 1, leadTimeDays: 1 };
   var FILE_EXT = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'zip', 'gbr', 'tgz'];
@@ -220,7 +221,10 @@
         ? h('button', { type: 'button', class: 'htcw-qr-btn htcw-qr-card', disabled: !enabled },
           h('span', { class: 'htcw-qr-title', text: c.label }), h('span', { class: 'htcw-qr-desc', text: c.description }))
         : h('button', { type: 'button', class: 'htcw-qr-btn', text: c.label, disabled: !enabled });
-      b.addEventListener('click', function () { sendCustomer(c.value); });
+      b.addEventListener('click', function () {
+        if (c.value === FILES_ACTION) { if (!intakeBusy && S.phase === 'intake') fileInput.click(); return; } // the picker, not a text turn
+        sendCustomer(c.value);
+      });
       group.appendChild(b);
     });
     return group;
@@ -266,6 +270,13 @@
     });
   }
 
+  function heldNames() { return heldFiles.map(function (f) { return String(f.name).slice(0, 100); }).slice(0, 5); }
+  function intakeBody(message, prior) {
+    var body = { history: serverHistory(prior), fields: S.fields, deferred: S.deferred, message: message, website: honeypotValue() };
+    if (heldFiles.length) body.heldFiles = heldNames(); // so the assistant acknowledges them and does not ask for files again
+    return body;
+  }
+
   async function requestIntake(message, prior) {
     var token = ++intakeToken;
     intakeBusy = true;
@@ -278,7 +289,7 @@
     try {
       var res = await fetch('/api/intake', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ history: serverHistory(prior), fields: S.fields, deferred: S.deferred, message: message, website: honeypotValue() })
+        body: JSON.stringify(intakeBody(message, prior))
       });
       var result = await res.json();
       if (!res.ok || !result.success) throw new Error(result.errorMessage || 'The assistant could not answer');
@@ -364,6 +375,35 @@
     appendHistory(entry, false);
     input.value = ''; autoGrow();
     requestIntake(text, prior);
+    return true;
+  }
+
+  // ---------- typed confirmation ----------
+  // <confirm-intent>
+  // A short message that only confirms ("confirm", "i confirm", "yes, send", "go ahead"...). Anything with a
+  // change request, a question or extra words does not match: it goes to the assistant as usual.
+  var CONFIRM_RE = /^(?:(?:ok|okay|yes|yep|yeah|sure|please)\s+)?(?:i\s+)?(?:confirm|confirmed|confirm it|send|send it|send it in|send it off|submit|submit it|go ahead|go ahead and send|go ahead and submit|looks good send|looks good send it|looks good submit|all good send it)(?:\s+please)?$/;
+  function isConfirmIntent(text) {
+    if (typeof text !== 'string' || text.length > 40) return false;
+    var t = text.toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    return !!t && CONFIRM_RE.test(t);
+  }
+  // </confirm-intent>
+  // With the summary card on screen, a typed confirmation does what the Confirm button does. Returns true when handled.
+  function typedConfirm(text) {
+    if (!summaryEl || S.editing || S.phase !== 'intake' || !isConfirmIntent(text)) return false;
+    var miss = requiredMissing();
+    if (miss.length) {
+      // Confirm is waiting for a required field: say so here, without calling the assistant, and point at it
+      var names = miss.map(function (n) { return LABELS[n]; });
+      var say = 'Almost there: ' + names.join(', ') + (names.length === 1 ? ' is' : ' are') + ' still marked Missing in the summary. Please fill ' + (names.length === 1 ? 'it' : 'them') + ' in, then tap Confirm.';
+      summaryEl.parentNode.insertBefore(bubble({ who: 'user', text: text }), summaryEl);
+      summaryEl.parentNode.insertBefore(bubble({ who: 'agent', sender: ASSISTANT, text: say }), summaryEl);
+      var first = summaryEl.querySelector('.htcw-sum-missing input, .htcw-sum-missing select');
+      if (first) first.focus({ preventScroll: false });
+      return true;
+    }
+    summaryEl.requestSubmit(); // the card's submit handler = the Confirm button
     return true;
   }
 
@@ -835,6 +875,7 @@
       var t = input.value.trim();
       if (!t) return;
       composerErr.hidden = true;
+      if (typedConfirm(t)) { input.value = ''; autoGrow(); return; }
       sendCustomer(t);
       return;
     }
@@ -1018,8 +1059,10 @@
       // the quote does not exist yet: hold the files and upload them right after Confirm
       res.ok.forEach(function (f) { heldFiles.push(f); });
       heldTray();
-      if (summaryEl && !S.editing) renderSummary(false);
       announce(res.ok.length + (res.ok.length === 1 ? ' file' : ' files') + ' added. ' + (res.ok.length === 1 ? 'It' : 'They') + ' will be sent when you confirm.');
+      // the conversation continues: the assistant acknowledges the files (if it is busy, the summary just refreshes)
+      var sent = sendCustomer(('Attached: ' + res.ok.map(function (f) { return f.name; }).join(', ')).slice(0, MAX_TURN_CHARS));
+      if (!sent && summaryEl && !S.editing) renderSummary(false);
     } else {
       uploadBatch(res.ok);
     }

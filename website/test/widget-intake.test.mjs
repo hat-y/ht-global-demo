@@ -17,7 +17,8 @@ test('widget intake: the 3-step form flow is gone', () => {
 test('widget intake: first open posts /api/intake with message null; later turns send history, fields and the message', () => {
   assert.match(js, /requestIntake\(null, \[\]\)/);
   assert.match(js, /fetch\('\/api\/intake'/);
-  assert.match(js, /body: JSON\.stringify\(\{ history: serverHistory\(prior\), fields: S\.fields, deferred: S\.deferred, message: message, website: honeypotValue\(\) \}\)/);
+  assert.match(js, /body: JSON\.stringify\(intakeBody\(message, prior\)\)/);
+  assert.match(js, /var body = \{ history: serverHistory\(prior\), fields: S\.fields, deferred: S\.deferred, message: message, website: honeypotValue\(\) \}/);
   assert.match(js, /SEND_HISTORY = 30/);
 });
 
@@ -128,7 +129,7 @@ test('widget (T40): the options shown on assistant turns are sent in history', (
 });
 
 test('widget (T40): when complete but the assistant asks an optional field, its chips show and the summary waits', () => {
-  assert.match(js, /OPTIONAL_FIELDS = \['leadTimeDays', 'comment'\]/);
+  assert.match(js, /OPTIONAL_FIELDS = \['leadTimeDays', 'comment', 'files'\]/);
   assert.match(js, /function inReview\(\) \{ return !S\.awaitOpt && !!\(S\.complete \|\| S\.review\); \}/);
   assert.match(js, /S\.awaitOpt = S\.complete && OPTIONAL_FIELDS\.indexOf\(result\.asking \|\| ''\) >= 0/);
   // a customer answer (chip or typed) releases the wait; the next response decides again

@@ -341,6 +341,8 @@ function size(body, key, label) {
 // Required set mirrors HT's Instant Quote form, in form order. Optional: leadTimeDays, comment.
 const REQUIRED_ORDER = ['name', 'company', 'email', 'phone', 'boardType', 'singleUpOrArray', 'unitOfMeasure', 'width', 'length', 'layers', 'quantity', 'itarClassification'];
 const FIELD_NAMES = [...REQUIRED_ORDER, 'leadTimeDays', 'comment'];
+// What the assistant may be asking about: the fields plus the optional files step (never a form field)
+const ASKING_NAMES = [...FIELD_NAMES, 'files'];
 const ENUMS = {
   boardType: ['Rigid PCB', 'Flex PCB', 'Rigid-Flex PCB', 'HDI PCB', 'Metal Core PCB', 'High Frequency PCB'],
   singleUpOrArray: ['Single Up', 'Array'],
@@ -577,7 +579,15 @@ function validateIntake(body) {
     if (!Array.isArray(body.deferred) || body.deferred.length > 12 || body.deferred.some((d) => typeof d !== 'string')) throw new HttpError(400, 'deferred must be an array of at most 12 field names.');
     deferred = cleanDeferred(body.deferred, fields);
   }
-  return { history, fields, message, deferred };
+  // T41: names of the files the customer already attached in the widget (held until Confirm): at most 5 names of at most 100 chars
+  let heldFiles = [];
+  if (body.heldFiles != null) {
+    if (!Array.isArray(body.heldFiles) || body.heldFiles.length > 5 || body.heldFiles.some((n) => typeof n !== 'string' || !cleanText(n, 101) || cleanText(n, 101).length > 100)) {
+      throw new HttpError(400, 'heldFiles must be an array of at most 5 file names of 1 to 100 characters.');
+    }
+    heldFiles = body.heldFiles.map((n) => cleanText(n, 100));
+  }
+  return { history, fields, message, deferred, heldFiles };
 }
 
 // Default n8n call: POST N8N_INTAKE_WEBHOOK_URL (synchronous answer), 15 s timeout.
@@ -902,7 +912,7 @@ export function createServer({ callSalesforce, callIntake = callIntakeWebhook, u
         const input = validateIntake(body);
         let answer = null;
         try {
-          answer = await callIntake({ history: input.history, fields: input.fields, message: input.message, ...(input.deferred.length ? { deferred: input.deferred } : {}) });
+          answer = await callIntake({ history: input.history, fields: input.fields, message: input.message, ...(input.deferred.length ? { deferred: input.deferred } : {}), ...(input.heldFiles.length ? { heldFiles: input.heldFiles } : {}) });
           if (!answer || typeof answer !== 'object' || !cleanText(answer.reply, 1500)) throw new Error('intake answer without a reply');
         } catch (error) {
           emit({ level: 'warn', msg: 'intake_fallback', detail: String((error && error.message) || error).slice(0, 300) });
@@ -919,7 +929,7 @@ export function createServer({ callSalesforce, callIntake = callIntakeWebhook, u
           fields,
           missing,
           deferred: missing.length ? deferred : [],
-          asking: FIELD_NAMES.includes(answer.asking) ? answer.asking : null,
+          asking: ASKING_NAMES.includes(answer.asking) ? answer.asking : null,
           complete: missing.length === 0
         }, { 'Cache-Control': 'no-store' });
       }

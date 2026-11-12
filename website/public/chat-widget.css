@@ -60,7 +60,7 @@
 #htcw .htcw-menu-danger{color:var(--htcw-err);font-weight:600}
 
 /* conversation */
-#htcw .htcw-log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:16px;background:var(--htcw-paper);display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth}
+#htcw .htcw-log{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:16px;background:var(--htcw-paper);display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth}
 #htcw .htcw-log:focus{outline:none}
 #htcw .htcw-msg{max-width:86%;padding:9px 12px;border-radius:4px;white-space:pre-wrap;overflow-wrap:anywhere;font:400 14px/1.5 Poppins,Arial,sans-serif}
 #htcw .htcw-agent{align-self:flex-start;background:#fff;color:var(--htcw-ink);border:1px solid var(--htcw-line);border-left:3px solid var(--htcw-yellow)}
@@ -76,7 +76,7 @@
 @keyframes htcw-bounce{0%,70%,100%{opacity:.3;transform:none}35%{opacity:1;transform:translateY(-3px)}}
 
 /* summary card */
-#htcw .htcw-card{align-self:stretch;max-width:100%;background:#fff;border:1px solid var(--htcw-line);border-top:3px solid var(--htcw-blue);border-radius:3px;padding:14px;margin:2px 0 4px}
+#htcw .htcw-card{align-self:stretch;min-width:0;max-width:100%;background:#fff;border:1px solid var(--htcw-line);border-top:3px solid var(--htcw-blue);border-radius:3px;padding:14px;margin:2px 0 4px}
 #htcw .htcw-card-in{animation:htcw-slide .32s ease-out both}
 @keyframes htcw-slide{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 #htcw .htcw-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -105,6 +105,7 @@
 /* quick replies: under the assistant's bubble, one tap answers */
 #htcw .htcw-qr{align-self:flex-start;display:flex;flex-wrap:wrap;gap:6px;max-width:100%;margin:-2px 0 2px}
 #htcw .htcw-qr-btn{
+  max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left;
   margin:0;padding:7px 12px;background:#fff;color:var(--htcw-blue);border:1px solid var(--htcw-blue);border-radius:2px;
   font:600 12.5px/1.25 Montserrat,Arial,sans-serif;cursor:pointer;transition:background-color .12s,color .12s,border-color .12s;
 }
@@ -143,8 +144,10 @@
 #htcw .htcw-sum-missing input,#htcw .htcw-sum-missing select{display:block;width:100%;height:36px;margin:0;padding:6px 9px;background:#fff;color:var(--htcw-ink);border:1px solid var(--htcw-line);border-radius:2px;font:400 14px/1.4 Poppins,Arial,sans-serif;box-shadow:none}
 #htcw .htcw-sum-missing input:focus,#htcw .htcw-sum-missing select:focus{outline:2px solid var(--htcw-blue);outline-offset:1px;border-color:var(--htcw-blue)}
 #htcw .htcw-sum-missing [aria-invalid="true"]{border-color:var(--htcw-err);background:#fff8f8}
-#htcw .htcw-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+/* a button label may change ("Opening your quote…") or be long: the row wraps instead of pushing a button out of the card */
+#htcw .htcw-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;min-width:0;max-width:100%;margin-top:14px}
 #htcw .htcw-btn{
+  min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:center;
   display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:9px 18px;margin:0;border:1px solid var(--htcw-yellow);border-radius:1px;
   background:var(--htcw-yellow);color:var(--htcw-btn-ink);font:600 14px/1.2 Montserrat,Arial,sans-serif;cursor:pointer;transition:background-color .15s,color .15s,border-color .15s;
 }
@@ -204,6 +207,8 @@
   #htcw .htcw-input,#htcw .htcw-field input,#htcw .htcw-field select,#htcw .htcw-field textarea,#htcw .htcw-sum-missing input,#htcw .htcw-sum-missing select{font-size:16px} /* no iOS zoom */
   #htcw .htcw-composer{padding-bottom:max(12px,env(safe-area-inset-bottom))}
   #htcw .htcw-grid{grid-template-columns:1fr}
+  #htcw .htcw-actions{flex-direction:column-reverse;align-items:stretch}
+  #htcw .htcw-actions .htcw-btn{width:100%}
 }
 @media (prefers-reduced-motion:reduce){
   #htcw *,#htcw *::before,#htcw *::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}
