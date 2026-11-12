@@ -57,7 +57,7 @@ export async function start(overrides = {}) {
   };
 }
 
-export const validQuote = { name: 'Vince Carter', company: 'Summit Avionics', email: 'vince@summit.example', phone: '+1 555 0100', layers: 4, quantity: 100, width: 100, length: 80, boardType: 'Rigid PCB', unitOfMeasure: 'mm', itarClassification: 'Commercial', comment: 'Need quote', message: 'Need quote' };
+export const validQuote = { name: 'Vince Carter', company: 'Summit Avionics', email: 'vince@summit.example', phone: '+1 555 0100', layers: 4, quantity: 100, width: 100, length: 80, boardType: 'Rigid PCB', singleUpOrArray: 'Single Up', unitOfMeasure: 'mm', itarClassification: 'Commercial', comment: 'Need quote', message: 'Need quote' };
 
 export function json(base, method, urlPath, body, headers = {}) {
   return fetch(base + urlPath, { method, headers: { 'Content-Type': 'application/json', ...headers }, body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body) });

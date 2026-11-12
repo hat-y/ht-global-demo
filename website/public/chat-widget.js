@@ -21,7 +21,6 @@
   var MAX_THREAD = 200;
   var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
   var BOARD_TYPES = ['Rigid PCB', 'Flex PCB', 'Rigid-Flex PCB', 'HDI PCB', 'Metal Core PCB', 'High Frequency PCB'];
-  var LAYERS = ['1', '2', '4', '6', '8', '10', '12', '14', '16', '18', '20'];
   var LEAD_TIMES = ['3', '4', '5', '6', '7', '10', '15'];
   var STEP_TITLES = ['Contact', 'Board', 'Details'];
   var FILE_EXT = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'zip', 'gbr', 'tgz'];
@@ -40,7 +39,7 @@
       phase: 'form',
       intro: 0, // opening sequence progress: 0 nothing, 1 hello shown, 2 explainer shown, 3 form card shown
       step: 1,
-      draft: { boardType: 'Rigid PCB', layers: '2', unitOfMeasure: 'mm', itarClassification: 'Commercial' },
+      draft: {},
       quoteId: null,
       conversationId: null,
       thread: [],
@@ -189,13 +188,13 @@
   function prompts(step) {
     var first = (S.draft.name || '').trim().split(/\s+/)[0];
     if (step === 2) return 'Thanks' + (first ? ', ' + first : '') + '. What kind of board do you need?';
-    return 'Nearly there. Size, lead time and classification help our team quote faster. Everything here is optional except the classification.';
+    return 'Nearly there. The export classification is required. Lead time, notes and files are optional, but they help our team quote faster.';
   }
   function summary(step) {
     var d = S.draft;
     if (step === 1) return [d.name, d.company, d.email, d.phone].filter(Boolean).join(' \u00b7 ');
     if (step === 2) {
-      var parts = [d.boardType, d.layers + ' layer' + (d.layers === '1' ? '' : 's')];
+      var parts = [d.boardType, d.layers + ' layer' + (String(d.layers) === '1' ? '' : 's')];
       if (d.quantity) parts.push('qty ' + d.quantity);
       return parts.join(' \u00b7 ');
     }
@@ -329,7 +328,7 @@
     } else {
       control = h('input', {
         id: id, name: opts.name, type: opts.type || 'text', autocomplete: opts.autocomplete || null,
-        inputmode: opts.inputmode || null, placeholder: opts.placeholder || null, min: opts.min || null, step: opts.step || null, maxlength: opts.maxlength || null
+        inputmode: opts.inputmode || null, placeholder: opts.placeholder || null, min: opts.min || null, max: opts.max || null, step: opts.step || null, maxlength: opts.maxlength || null
       });
     }
     if (opts.required) control.setAttribute('aria-required', 'true');
@@ -352,18 +351,25 @@
   }
   function chips(name, label, values, opts) {
     opts = opts || {};
-    var group = h('fieldset', { class: 'htcw-chips' + (opts.full === false ? '' : ' htcw-full') }, h('legend', { text: label }));
+    var errId = 'htcw-r-' + name + '-err-' + (++uid);
+    var legend = h('legend', { text: label }, opts.required ? h('span', { class: 'htcw-req', 'aria-hidden': 'true', text: ' *' }) : null);
+    var group = h('fieldset', { class: 'htcw-chips' + (opts.full === false ? '' : ' htcw-full'), 'aria-required': opts.required ? 'true' : null }, legend);
     var list = h('div', { class: 'htcw-chiplist' });
     values.forEach(function (v, i) {
       var id = 'htcw-r-' + name + '-' + (++uid);
       var radio = h('input', { type: 'radio', id: id, name: 'htcw-' + name, value: v[0] });
-      if ((S.draft[name] || values[0][0]) === v[0]) radio.checked = true;
+      if (S.draft[name] === v[0]) radio.checked = true;
       list.appendChild(h('span', { class: 'htcw-chip' }, radio, h('label', { for: id, text: v[1] })));
     });
     group.appendChild(list);
+    var err = h('p', { class: 'htcw-err', id: errId, hidden: true });
+    group.appendChild(err);
     return {
-      el: group, name: name,
-      value: function () { var c = group.querySelector('input:checked'); return c ? c.value : values[0][0]; }
+      el: group, name: name, required: !!opts.required,
+      value: function () { var c = group.querySelector('input:checked'); return c ? c.value : ''; },
+      first: function () { return group.querySelector('input'); },
+      fail: function (msg) { err.textContent = msg; err.hidden = false; group.setAttribute('aria-invalid', 'true'); group.setAttribute('aria-describedby', errId); },
+      clear: function () { err.hidden = true; err.textContent = ''; group.removeAttribute('aria-invalid'); group.removeAttribute('aria-describedby'); }
     };
   }
 
@@ -378,20 +384,21 @@
       add(field({ name: 'name', label: 'Your name', required: true, autocomplete: 'name', full: true }));
       add(field({ name: 'company', label: 'Company', required: true, autocomplete: 'organization', full: true }));
       add(field({ name: 'email', label: 'Work email', type: 'email', required: true, autocomplete: 'email', inputmode: 'email', full: true }));
-      add(field({ name: 'phone', label: 'Phone', type: 'tel', autocomplete: 'tel', inputmode: 'tel', full: true }));
+      add(field({ name: 'phone', label: 'Phone', required: true, type: 'tel', autocomplete: 'tel', inputmode: 'tel', full: true }));
     } else if (step === 2) {
-      addChips(chips('boardType', 'Board type', BOARD_TYPES.map(function (b) { return [b, b]; })));
-      add(field({ name: 'layers', label: 'Layers', kind: 'select', options: LAYERS.map(function (l) { return [l, l]; }) }));
+      addChips(chips('boardType', 'Board type', BOARD_TYPES.map(function (b) { return [b, b]; }), { required: true }));
+      addChips(chips('singleUpOrArray', 'Single up or array', [['Single Up', 'Single up'], ['Array', 'Array']], { required: true, full: false }));
+      addChips(chips('unitOfMeasure', 'Unit of measure', [['mm', 'mm'], ['in', 'inches']], { required: true, full: false }));
+      add(field({ name: 'width', label: 'Width', required: true, type: 'number', min: '0', step: 'any', inputmode: 'decimal' }));
+      add(field({ name: 'length', label: 'Length', required: true, type: 'number', min: '0', step: 'any', inputmode: 'decimal' }));
+      add(field({ name: 'layers', label: 'Layers', required: true, type: 'number', min: '1', max: '64', step: '1', inputmode: 'numeric', placeholder: 'e.g. 4' }));
       add(field({ name: 'quantity', label: 'Quantity', required: true, type: 'number', min: '1', step: '1', inputmode: 'numeric', placeholder: 'e.g. 100' }));
     } else {
-      add(field({ name: 'width', label: 'Width', type: 'number', min: '0', step: 'any', inputmode: 'decimal' }));
-      add(field({ name: 'length', label: 'Length', type: 'number', min: '0', step: 'any', inputmode: 'decimal' }));
-      addChips(chips('unitOfMeasure', 'Unit', [['mm', 'mm'], ['in', 'inches']], { full: false }));
       add(field({ name: 'leadTimeDays', label: 'Lead time', kind: 'select', options: [['', 'No preference']].concat(LEAD_TIMES.map(function (l) { return [l, l + ' days']; })) }));
       addChips(chips('itarClassification', 'Classification', [
         ['Commercial', 'Commercial (not ITAR/EAR controlled)'],
         ['ITAR/EAR', 'ITAR/EAR controlled']
-      ]));
+      ], { required: true }));
       add(field({ name: 'comment', label: 'Anything else?', kind: 'textarea', placeholder: 'Finish, stackup, impedance, special requirements', full: true }));
       grid.appendChild(fileField());
     }
@@ -434,11 +441,25 @@
           if (!v) bad(f, 'Please enter your email address.');
           else if (!EMAIL_RE.test(v)) bad(f, 'That email doesn\u2019t look right. Use a format like name@company.com.');
         }
+        if (f.name === 'phone' && !v) bad(f, 'Please enter a phone number.');
+        if (f.name === 'layers') {
+          if (!v) bad(f, 'Please enter the number of layers.');
+          else if (!(Number(v) >= 1 && Number(v) <= 64 && Number.isInteger(Number(v)))) bad(f, 'Enter a whole number of layers from 1 to 64.');
+        }
         if (f.name === 'quantity') {
           if (!v) bad(f, 'Please enter a quantity.');
-          else if (!(Number(v) >= 1 && isFinite(Number(v)))) bad(f, 'Enter a quantity of 1 or more.');
+          else if (!(Number(v) >= 1 && Number.isInteger(Number(v)))) bad(f, 'Enter a whole quantity of 1 or more.');
         }
-        if ((f.name === 'width' || f.name === 'length') && v && !(Number(v) > 0 && isFinite(Number(v)))) bad(f, 'Enter a size greater than 0.');
+        if (f.name === 'width' || f.name === 'length') {
+          var noun = f.name === 'width' ? 'width' : 'length';
+          if (!v) bad(f, f.name === 'width' ? 'Please enter the board width.' : 'Please enter the board length.');
+          else if (!(Number(v) > 0 && Number(v) <= 10000)) bad(f, 'Enter a ' + noun + ' greater than 0 and at most 10000.');
+        }
+      });
+      var chipMsg = { boardType: 'Please choose a board type.', singleUpOrArray: 'Please choose single up or array.', unitOfMeasure: 'Please choose the unit.', itarClassification: 'Please choose the classification.' };
+      chipSets.forEach(function (c) {
+        c.clear();
+        if (c.required && !c.value()) { c.fail(chipMsg[c.name]); ok = false; if (!firstBad) firstBad = c.first(); }
       });
       if (firstBad) firstBad.focus();
       return ok;
@@ -490,7 +511,7 @@
     var d = S.draft;
     var payload = {
       name: (d.name || '').trim(), company: (d.company || '').trim(), email: (d.email || '').trim(), phone: (d.phone || '').trim(),
-      boardType: d.boardType, unitOfMeasure: d.unitOfMeasure,
+      boardType: d.boardType, singleUpOrArray: d.singleUpOrArray, unitOfMeasure: d.unitOfMeasure,
       width: numOrNull(d.width), length: numOrNull(d.length), layers: numOrNull(d.layers),
       leadTimeDays: numOrNull(d.leadTimeDays), quantity: numOrNull(d.quantity),
       itarClassification: d.itarClassification, comment: (d.comment || '').trim(),

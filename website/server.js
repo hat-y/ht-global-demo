@@ -316,6 +316,20 @@ function num(body, key, min, max, { integer = false } = {}) {
   return v;
 }
 
+function blank(v) { return v == null || (typeof v === 'string' && v.trim() === ''); }
+function requireField(body, key, label) {
+  if (blank(body[key])) throw new HttpError(400, `${label} is required.`);
+}
+// Width and length must be greater than 0 (HT's Instant Quote form requires a real size).
+function size(body, key, label) {
+  let v = body[key];
+  if (typeof v === 'string') v = Number(v);
+  if (!(typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 10000)) throw new HttpError(400, `${label} must be greater than 0 and at most 10000.`);
+  return v;
+}
+
+// Required set mirrors HT's Instant Quote form. Checked in form order so the first missing field is reported.
+// Optional: leadTimeDays, comment/message (and files, which have their own endpoint).
 function validateQuote(body) {
   const out = {};
   out.name = str(body, 'name', 120, { required: true });
@@ -323,16 +337,23 @@ function validateQuote(body) {
   const email = str(body, 'email', 254 + 1, { required: false });
   if (!email || email.length > 254 || !EMAIL.test(email)) throw new HttpError(400, 'A valid email is required.');
   out.email = email;
+  requireField(body, 'phone', 'Phone');
+  requireField(body, 'boardType', 'Board type');
+  requireField(body, 'singleUpOrArray', 'Single up or array');
+  requireField(body, 'unitOfMeasure', 'Unit of measure');
+  requireField(body, 'width', 'Width');
+  requireField(body, 'length', 'Length');
+  requireField(body, 'layers', 'Layers');
+  requireField(body, 'quantity', 'Quantity');
+  requireField(body, 'itarClassification', 'Classification');
   out.phone = str(body, 'phone', 40);
   out.comment = str(body, 'comment', 2000);
   out.message = str(body, 'message', 2000);
-  for (const k of ['boardType', 'unitOfMeasure', 'itarClassification']) out[k] = str(body, k, 80);
+  for (const k of ['boardType', 'singleUpOrArray', 'unitOfMeasure', 'itarClassification']) out[k] = str(body, k, 80);
+  out.width = size(body, 'width', 'Width');
+  out.length = size(body, 'length', 'Length');
   out.layers = num(body, 'layers', 1, 64, { integer: true });
-  const rawQty = body.quantity;
-  if (rawQty == null || (typeof rawQty === 'string' && rawQty.trim() === '')) throw new HttpError(400, 'Quantity is required.');
   out.quantity = num(body, 'quantity', 1, 1000000, { integer: true });
-  out.width = num(body, 'width', 0, 10000);
-  out.length = num(body, 'length', 0, 10000);
   out.leadTimeDays = num(body, 'leadTimeDays', 0, 365);
   for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
   return out;

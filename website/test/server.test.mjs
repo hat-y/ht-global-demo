@@ -190,10 +190,12 @@ test('POST validation rejects bad input with 400 and a clear message, never call
     [{ ...validQuote, layers: 65 }, 'layers must be a whole number between 1 and 64.'],
     [{ ...validQuote, quantity: 0 }, 'quantity must be a whole number between 1 and 1000000.'],
     [{ ...validQuote, quantity: 1000001 }, 'quantity must be a whole number between 1 and 1000000.'],
-    [{ ...validQuote, width: -1 }, 'width must be a number between 0 and 10000.'],
-    [{ ...validQuote, length: 10001 }, 'length must be a number between 0 and 10000.'],
+    [{ ...validQuote, width: -1 }, 'Width must be greater than 0 and at most 10000.'],
+    [{ ...validQuote, length: 10001 }, 'Length must be greater than 0 and at most 10000.'],
     [{ ...validQuote, leadTimeDays: 366 }, 'leadTimeDays must be a number between 0 and 365.'],
-    [{ ...validQuote, width: 'abc' }, 'width must be a number between 0 and 10000.'],
+    [{ ...validQuote, width: 'abc' }, 'Width must be greater than 0 and at most 10000.'],
+    [{ ...validQuote, width: 0 }, 'Width must be greater than 0 and at most 10000.'],
+    [{ ...validQuote, length: 0 }, 'Length must be greater than 0 and at most 10000.'],
     [{ ...validQuote, name: 123 }, 'name must be a string.'],
     [[1, 2], 'Request body must be a JSON object.']
   ];
@@ -226,7 +228,7 @@ test('POST trims, caps lengths and drops unknown fields', () => withServer({}, a
 }));
 
 test('POST accepts null optional numbers (widget sends null when empty)', () => withServer({}, async (s) => {
-  const res = await json(s.base, 'POST', '/api/quote', { name: 'A', company: 'B', email: 'a@b.co', width: null, length: null, leadTimeDays: null, quantity: 5, layers: 2 });
+  const res = await json(s.base, 'POST', '/api/quote', { ...validQuote, leadTimeDays: null, comment: null, message: null });
   assert.equal(res.status, 200);
   assert.equal(s.calls.sf.length, 1);
 }));
@@ -452,4 +454,67 @@ test('node server.js: startup log line, listens on PORT, SIGTERM exits 0', async
   const { code } = await exit;
   assert.equal(code, 0);
   assert.match(out, /"host":"0\.0\.0\.0"/);
+});
+
+const REQUIRED_MESSAGES = [
+  ['phone', 'Phone is required.'],
+  ['boardType', 'Board type is required.'],
+  ['singleUpOrArray', 'Single up or array is required.'],
+  ['unitOfMeasure', 'Unit of measure is required.'],
+  ['width', 'Width is required.'],
+  ['length', 'Length is required.'],
+  ['layers', 'Layers is required.'],
+  ['quantity', 'Quantity is required.'],
+  ['itarClassification', 'Classification is required.']
+];
+for (const [key, message] of REQUIRED_MESSAGES) {
+  test(`POST requires ${key}: missing, null or blank → 400 "${message}" and no Salesforce call`, () => withServer({ config: { limits: { post: { max: 1000, windowMs: 1000 } } } }, async (s) => {
+    for (const v of [undefined, null, '', '  ']) {
+      const res = await json(s.base, 'POST', '/api/quote', { ...validQuote, [key]: v });
+      assert.equal(res.status, 400, `${key}=${JSON.stringify(v)}`);
+      assert.equal((await res.json()).errorMessage, message);
+    }
+    assert.equal(s.calls.sf.length, 0);
+  }));
+}
+
+test('POST reports the first missing required field in form order', () => withServer({}, async (s) => {
+  const res = await json(s.base, 'POST', '/api/quote', { name: 'A', company: 'B', email: 'a@b.co' });
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).errorMessage, 'Phone is required.');
+  assert.equal(s.calls.sf.length, 0);
+}));
+
+test('POST happy path with every required field and no optional ones forwards them to Salesforce', () => withServer({}, async (s) => {
+  const body = { name: 'A', company: 'B', email: 'a@b.co', phone: '555', boardType: 'Flex PCB', singleUpOrArray: 'Array', unitOfMeasure: 'in', width: '3.5', length: 4, layers: '6', quantity: '10', itarClassification: 'ITAR/EAR' };
+  const res = await json(s.base, 'POST', '/api/quote', body);
+  assert.equal(res.status, 200);
+  assert.equal(s.calls.sf.length, 1);
+  const sent = s.calls.sf[0].body;
+  assert.equal(sent.singleUpOrArray, 'Array');
+  assert.equal(sent.unitOfMeasure, 'in');
+  assert.equal(sent.width, 3.5);
+  assert.equal(sent.layers, 6);
+  assert.equal(sent.leadTimeDays, undefined);
+}));
+
+test('widget marks every field required in HT Instant Quote as required and the three optional ones keep "(optional)"', async () => {
+  const fs = await import('node:fs');
+  const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'chat-widget.js'), 'utf8');
+  for (const name of ['name', 'company', 'email', 'phone', 'layers', 'quantity', 'width', 'length']) {
+    assert.match(js, new RegExp(`field\\(\\{ name: '${name}',[^\\n]*required: true`), name);
+  }
+  for (const name of ['boardType', 'singleUpOrArray', 'unitOfMeasure', 'itarClassification']) {
+    assert.match(js, new RegExp(`chips\\('${name}',[^\\n]*required: true|chips\\('${name}',[\\s\\S]{0,200}required: true`), name);
+  }
+  for (const name of ['leadTimeDays', 'comment']) {
+    const line = js.split('\n').find((l) => l.includes(`name: '${name}'`));
+    assert.ok(line && !/required: true/.test(line), name);
+  }
+  assert.match(js, /h\('label', \{ for: id \}, 'Drawings, stack-up or Gerbers', h\('span', \{ class: 'htcw-opt', text: ' \(optional\)' \}\)\)/);
+  for (const msg of ['Please enter the number of layers.', 'Please enter the board width.', 'Please enter the board length.', 'Please choose single up or array.', 'Please choose the unit.', 'Please enter a phone number.', 'Please choose the classification.']) {
+    assert.ok(js.includes(msg), msg);
+  }
+  assert.doesNotMatch(js, /Everything here is optional/);
+  assert.doesNotMatch(js, /name: 'layers'[^\n]*kind: 'select'/);
 });
