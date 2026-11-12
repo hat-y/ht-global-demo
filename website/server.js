@@ -178,6 +178,8 @@ const MAX_TRANSCRIPT_BODY_BYTES = 512 * 1024;
 const MAX_TRANSCRIPT_ITEMS = 60;
 const MAX_HISTORY_ITEMS = 30;
 const MAX_TURN_CHARS = 2000;
+const MAX_HISTORY_OPTIONS = 8;
+const MAX_OPTION_CHARS = 40;
 const INTAKE_TIMEOUT_MS = 15000;
 // Default 5 MB per file: the demo org (Developer Edition) has 20 MB of file storage in total.
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -541,7 +543,19 @@ function validateIntake(body) {
       if (!t || typeof t !== 'object' || (t.role !== 'assistant' && t.role !== 'customer')) throw new HttpError(400, 'history role must be assistant or customer.');
       if (typeof t.text !== 'string') throw new HttpError(400, 'history text must be a string.');
       if (t.text.length > MAX_TURN_CHARS) throw new HttpError(400, `history text must be at most ${MAX_TURN_CHARS} characters.`);
-      history.push({ role: t.role, text: t.text });
+      const turn = { role: t.role, text: t.text };
+      if (t.options != null) {
+        // T40: labels of the option buttons an assistant turn showed, so the agent can resolve "the second one"
+        if (t.role !== 'assistant') throw new HttpError(400, 'history options are only allowed on assistant turns.');
+        if (!Array.isArray(t.options) || t.options.length > MAX_HISTORY_OPTIONS) throw new HttpError(400, `history options must be an array of at most ${MAX_HISTORY_OPTIONS} labels.`);
+        const options = t.options.map((o) => {
+          const label = typeof o === 'string' ? cleanText(o, MAX_OPTION_CHARS + 1) : '';
+          if (!label || label.length > MAX_OPTION_CHARS) throw new HttpError(400, `history option labels must be 1 to ${MAX_OPTION_CHARS} characters.`);
+          return label;
+        });
+        if (options.length) turn.options = options;
+      }
+      history.push(turn);
     }
   }
   let message = null;

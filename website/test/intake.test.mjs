@@ -366,3 +366,49 @@ test('intake: asking is passed through when it is a field name, null otherwise',
   assert.equal((await (await json(s.base, 'POST', '/api/intake', { history: [], fields: {}, message: 'a' })).json()).asking, 'email');
   assert.equal((await (await json(s.base, 'POST', '/api/intake', { history: [], fields: {}, message: 'b' })).json()).asking, null);
 }));
+
+test('intake (T40): option labels shown on assistant turns are validated, trimmed and forwarded to n8n', () => withServer({}, async (s) => {
+  const history = [
+    { role: 'assistant', text: 'Which board?', options: ['Rigid PCB', ' Flex PCB ', 'x'.repeat(40)] },
+    { role: 'customer', text: 'the second one' },
+    { role: 'assistant', text: 'no options here' }
+  ];
+  const res = await json(s.base, 'POST', '/api/intake', { history, fields: {}, message: 'ok' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(s.calls.intake[0].history, [
+    { role: 'assistant', text: 'Which board?', options: ['Rigid PCB', 'Flex PCB', 'x'.repeat(40)] },
+    { role: 'customer', text: 'the second one' },
+    { role: 'assistant', text: 'no options here' }
+  ]);
+  // exactly 8 options is accepted; an empty list is dropped
+  const eight = Array.from({ length: 8 }, (_, i) => 'Opt ' + i);
+  assert.equal((await json(s.base, 'POST', '/api/intake', { history: [{ role: 'assistant', text: 'a', options: eight }, { role: 'assistant', text: 'b', options: [] }], fields: {}, message: 'ok' })).status, 200);
+  assert.deepEqual(s.calls.intake[1].history, [{ role: 'assistant', text: 'a', options: eight }, { role: 'assistant', text: 'b' }]);
+}));
+
+test('intake (T40): invalid options → 400 and n8n is not called', () => withServer({}, async (s) => {
+  const bad = [
+    [{ role: 'assistant', text: 'a', options: Array.from({ length: 9 }, (_, i) => 'o' + i) }],
+    [{ role: 'assistant', text: 'a', options: ['x'.repeat(41)] }],
+    [{ role: 'customer', text: 'a', options: ['Rigid PCB'] }],
+    [{ role: 'assistant', text: 'a', options: 'Rigid PCB' }],
+    [{ role: 'assistant', text: 'a', options: [5] }],
+    [{ role: 'assistant', text: 'a', options: ['  '] }]
+  ];
+  for (const history of bad) {
+    const res = await json(s.base, 'POST', '/api/intake', { history, fields: {}, message: 'hi' });
+    assert.equal(res.status, 400, JSON.stringify(history).slice(0, 80));
+    assert.equal((await res.json()).success, false);
+  }
+  assert.equal(s.calls.intake.length, 0);
+}));
+
+test('intake (T40): asking is passed through unchanged for the optional fields', () => withServer({
+  intakeImpl: async (p) => ({ reply: 'ok', fieldUpdates: {}, asking: p.message })
+}, async (s) => {
+  for (const f of ['leadTimeDays', 'comment']) {
+    const j = await (await json(s.base, 'POST', '/api/intake', { history: [], fields: FULL, message: f })).json();
+    assert.equal(j.complete, true);
+    assert.equal(j.asking, f);
+  }
+}));

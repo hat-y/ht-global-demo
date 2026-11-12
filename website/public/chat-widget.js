@@ -31,6 +31,7 @@
   var MAX_TURN_CHARS = 2000;
   var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
   var BOARD_TYPES = ['Rigid PCB', 'Flex PCB', 'Rigid-Flex PCB', 'HDI PCB', 'Metal Core PCB', 'High Frequency PCB'];
+  var OPTIONAL_FIELDS = ['leadTimeDays', 'comment']; // asked after the required ones; the summary waits for them
   var REQUIRED_COUNT = 12; // name, company, email, phone, board type, single up/array, unit, width, length, layers, quantity, classification
   var NUMERIC = { width: 1, length: 1, layers: 1, quantity: 1, leadTimeDays: 1 };
   var FILE_EXT = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'zip', 'gbr', 'tgz'];
@@ -55,6 +56,7 @@
       reasked: false, // the deferred field was asked again already
       review: false, // show the summary although a deferred field is still missing
       complete: false,
+      awaitOpt: false, // complete, but the assistant is still asking an optional field (lead time / notes): no summary yet
       editing: false, // summary card in edit mode
       editDraft: null,
       quoteId: null,
@@ -209,7 +211,7 @@
   }
 
   // review = the summary card is due: everything is in, or only postponed fields are missing and they were asked once
-  function inReview() { return !!(S.complete || S.review); }
+  function inReview() { return !S.awaitOpt && !!(S.complete || S.review); }
   function chipRow(entry, enabled) {
     var cards = entry.chips.some(function (c) { return c.description; });
     var group = h('div', { class: 'htcw-qr' + (cards ? ' htcw-qr-cards' : ''), role: 'group', 'aria-label': 'Quick replies' });
@@ -256,7 +258,12 @@
   }
 
   function serverHistory(list) {
-    return list.slice(-SEND_HISTORY).map(function (e) { return { role: e.role, text: String(e.text).slice(0, MAX_TURN_CHARS) }; });
+    return list.slice(-SEND_HISTORY).map(function (e) {
+      var t = { role: e.role, text: String(e.text).slice(0, MAX_TURN_CHARS) };
+      // the option buttons this turn showed, so "the second one" can be resolved server-side
+      if (e.role === 'assistant' && e.chips && e.chips.length) t.options = e.chips.map(function (c) { return String(c.label).slice(0, 40); }).slice(0, 8);
+      return t;
+    });
   }
 
   async function requestIntake(message, prior) {
@@ -286,6 +293,7 @@
       var onlyDeferred = S.missing.length > 0 && S.missing.every(function (n) { return S.deferred.indexOf(n) >= 0; });
       var grew = S.deferred.some(function (n) { return prevDeferred.indexOf(n) < 0; });
       S.review = false;
+      S.awaitOpt = S.complete && OPTIONAL_FIELDS.indexOf(result.asking || '') >= 0;
       // the summary is due when only postponed fields are left and they were asked once (or postponed again, or the assistant wrapped up)
       if (onlyDeferred) {
         var asking = result.asking || '';
@@ -348,7 +356,7 @@
     }
     var prior = S.history.slice();
     removeSummary();
-    S.editing = false; S.editDraft = null; S.review = false;
+    S.editing = false; S.editDraft = null; S.review = false; S.awaitOpt = false;
     disableChips();
     var entry = { role: 'customer', text: text };
     S.history.push(entry);
@@ -779,7 +787,7 @@
     });
     var first = firstName();
     S.thread.push({ who: 'agent', sender: ASSISTANT, text: 'Thanks' + (first ? ', ' + first : '') + '. Your quote request is open with HT Global. I\u2019ll reply here, and our team can join in too.' });
-    S.history = []; S.complete = false; S.missing = []; S.deferred = []; S.reasked = false; S.review = false; S.editing = false; S.editDraft = null;
+    S.history = []; S.complete = false; S.awaitOpt = false; S.missing = []; S.deferred = []; S.reasked = false; S.review = false; S.editing = false; S.editDraft = null;
     S.pendingSince = Date.now();
     save();
     summaryEl = null;

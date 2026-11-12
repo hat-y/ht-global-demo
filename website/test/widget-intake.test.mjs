@@ -121,3 +121,17 @@ test('widget S24: old cards are disabled after a choice, like chips', () => {
   assert.match(js, /querySelectorAll\('\.htcw-qr-btn'\)[\s\S]{0,60}b\.disabled = true/);
   assert.ok(css.includes('.htcw-qr-card:disabled'));
 });
+
+test('widget (T40): the options shown on assistant turns are sent in history', () => {
+  assert.match(js, /t\.options = e\.chips\.map\(function \(c\) \{ return String\(c\.label\)\.slice\(0, 40\); \}\)\.slice\(0, 8\)/);
+  assert.match(js, /e\.role === 'assistant' && e\.chips && e\.chips\.length/);
+});
+
+test('widget (T40): when complete but the assistant asks an optional field, its chips show and the summary waits', () => {
+  assert.match(js, /OPTIONAL_FIELDS = \['leadTimeDays', 'comment'\]/);
+  assert.match(js, /function inReview\(\) \{ return !S\.awaitOpt && !!\(S\.complete \|\| S\.review\); \}/);
+  assert.match(js, /S\.awaitOpt = S\.complete && OPTIONAL_FIELDS\.indexOf\(result\.asking \|\| ''\) >= 0/);
+  // a customer answer (chip or typed) releases the wait; the next response decides again
+  assert.match(js, /S\.editing = false; S\.editDraft = null; S\.review = false; S\.awaitOpt = false;/);
+  assert.match(js, /awaitOpt: false/);
+});
