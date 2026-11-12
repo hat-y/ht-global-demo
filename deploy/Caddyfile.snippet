@@ -9,6 +9,8 @@
 # Prerequisites: DNS A record htglobal.vantegrateos.com -> <vm-ip>, and the
 # ht-global-web container running on the vantegrate_default network.
 htglobal.vantegrateos.com {
+	# Uploads: Caddy sets no request body limit by default (do not add request_body max_size below 25MB).
+	# The app enforces 25 MB per file and answers 413 itself.
 	encode zstd gzip
 	reverse_proxy ht-global-web:4173
 }

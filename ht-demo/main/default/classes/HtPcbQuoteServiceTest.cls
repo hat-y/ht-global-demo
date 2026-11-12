@@ -389,4 +389,79 @@ private class HtPcbQuoteServiceTest {
         System.assertEquals(0, [SELECT COUNT() FROM Quote]);
         System.assertEquals(0, [SELECT COUNT() FROM Contact WHERE Email = 'qty@example.com']);
     }
+
+    @IsTest
+    static void appendMessage_gerbersReceived_setsQuoteFlagAndAddsMessage() {
+        HtPcbQuoteResult s = startForPolling('gerb1@example.com');
+        System.assertEquals(false, [SELECT PCB_Gerbers_Received__c FROM Quote WHERE Id = :s.quoteId].PCB_Gerbers_Received__c);
+
+        HtPcbQuoteService.QuoteRequest req = new HtPcbQuoteService.QuoteRequest();
+        req.conversationId = s.conversationId;
+        req.quoteId = s.quoteId;
+        req.message = '\uD83D\uDCCE Attached: board.zip (1.2 MB)';
+        req.gerbersReceived = true;
+        HtPcbQuoteResult r = HtPcbQuoteService.appendMessage(req);
+
+        System.assertEquals(true, r.success, r.errorMessage == null ? 'ok' : r.errorMessage);
+        System.assertEquals(true, [SELECT PCB_Gerbers_Received__c FROM Quote WHERE Id = :s.quoteId].PCB_Gerbers_Received__c);
+        Integer found = 0;
+        for (ConversationMessage__c m : [SELECT Body__c FROM ConversationMessage__c WHERE Conversation__c = :s.conversationId]) {
+            if (m.Body__c != null && m.Body__c.contains('Attached: board.zip')) {
+                found++;
+            }
+        }
+        System.assertEquals(1, found);
+    }
+
+    @IsTest
+    static void appendMessage_withoutGerbersFlag_leavesQuoteFlagAlone() {
+        HtPcbQuoteResult s = startForPolling('gerb2@example.com');
+        HtPcbQuoteService.QuoteRequest req = new HtPcbQuoteService.QuoteRequest();
+        req.conversationId = s.conversationId;
+        req.quoteId = s.quoteId;
+        req.message = 'Attached: drawing.pdf (10 KB)';
+        System.assertEquals(true, HtPcbQuoteService.appendMessage(req).success);
+        System.assertEquals(false, [SELECT PCB_Gerbers_Received__c FROM Quote WHERE Id = :s.quoteId].PCB_Gerbers_Received__c);
+    }
+
+    @IsTest
+    static void appendMessage_wrongPair_isRejectedAndStoresNothing() {
+        HtPcbQuoteResult a = startForPolling('pair-a@example.com');
+        HtPcbQuoteResult b = startForPolling('pair-b@example.com');
+        Integer before = [SELECT COUNT() FROM ConversationMessage__c WHERE Conversation__c = :a.conversationId];
+
+        HtPcbQuoteService.QuoteRequest req = new HtPcbQuoteService.QuoteRequest();
+        req.conversationId = a.conversationId;
+        req.quoteId = b.quoteId; // another visitor's quote
+        req.message = 'sneaky';
+        req.gerbersReceived = true;
+        HtPcbQuoteResult r = HtPcbQuoteService.appendMessage(req);
+
+        System.assertEquals(false, r.success);
+        System.assertEquals('Conversation not found', r.errorMessage);
+        System.assertEquals(before, [SELECT COUNT() FROM ConversationMessage__c WHERE Conversation__c = :a.conversationId]);
+        System.assertEquals(false, [SELECT PCB_Gerbers_Received__c FROM Quote WHERE Id = :b.quoteId].PCB_Gerbers_Received__c);
+    }
+
+    @IsTest
+    static void appendMessage_gerbersWithoutQuoteId_isRejected() {
+        HtPcbQuoteResult s = startForPolling('gerb3@example.com');
+        HtPcbQuoteService.QuoteRequest req = new HtPcbQuoteService.QuoteRequest();
+        req.conversationId = s.conversationId;
+        req.message = 'Attached: a.zip (1 KB)';
+        req.gerbersReceived = true;
+        HtPcbQuoteResult r = HtPcbQuoteService.appendMessage(req);
+        System.assertEquals(false, r.success);
+        System.assertEquals(false, [SELECT PCB_Gerbers_Received__c FROM Quote WHERE Id = :s.quoteId].PCB_Gerbers_Received__c);
+    }
+
+    @IsTest
+    static void verifyPair_trueOnlyForTheMatchingPair() {
+        HtPcbQuoteResult a = startForPolling('vp-a@example.com');
+        HtPcbQuoteResult b = startForPolling('vp-b@example.com');
+        System.assertEquals(true, HtPcbQuoteService.verifyPair(a.conversationId, a.quoteId));
+        System.assertEquals(false, HtPcbQuoteService.verifyPair(a.conversationId, b.quoteId));
+        System.assertEquals(false, HtPcbQuoteService.verifyPair(a.conversationId, null));
+        System.assertEquals(false, HtPcbQuoteService.verifyPair('not-an-id', a.quoteId));
+    }
 }

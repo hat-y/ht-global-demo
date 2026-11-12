@@ -59,3 +59,11 @@ The next deploy from `main` overwrites the rollback, so revert the commit on `ma
 `<vm-ip>` is the VM address. The External Client App files in `ht-demo` (`externalClientApps/*.eca-meta.xml` and `extlClntAppGlobalOauthSets/*`) hold placeholder values (`admin@example.com`, `https://n8n.example.com/oauth/callback`); the org keeps its real values, so do not deploy those two files.
 
 `ht-demo/main/default/customMetadata/ConversationBrand.Default.md-meta.xml` has `__HT_LOGO_PUBLIC_URL__` in `LogoUrl__c`. The org keeps its real value, which is the public ContentDistribution link of the HT logo. Replace the placeholder with that link before you deploy the file, or leave the file out of the deploy. Otherwise the console logo breaks.
+
+## File uploads (RFQ drawings, stack-ups, Gerbers)
+
+- Endpoint: `POST /api/quote/files?conversationId=..&quoteId=..` (raw body, `Content-Type: application/octet-stream`, `X-File-Name` URL-encoded). The pair is verified in Salesforce before anything is stored; allowlist pdf, doc, docx, xls, xlsx, csv, jpg, jpeg, png, zip, gbr, tgz; magic bytes must match; 25 MB per file; 10 uploads per IP per 10 min; at most 2 in flight (memory). Files land as Salesforce Files on the Quote (FirstPublishLocationId), plus a customer message `📎 Attached: <name> (<size>)` and, for zip/gbr/tgz, `Quote.PCB_Gerbers_Received__c = true`.
+- Limits are env-tunable (`deploy/web.env.example`: `RATE_UPLOAD_*`, `UPLOAD_MAX_*`, `UPLOAD_IDLE_TIMEOUT_SEC`). A body idle for 30 s gets a generic 408 and frees its slot; the server also sets requestTimeout 120 s, headersTimeout 30 s, keepAliveTimeout 5 s. If the file is stored but the conversation message cannot be written, the answer is 200 `{success:true, stored:true, messageLogged:false}` (log `upload_without_message`, agent not notified) so a retry does not duplicate the file. `POST /api/quote` accepts `filesPending:true` (no `rfq_created` notification; the last upload notifies, `more=1` on the others). The container memory limit is 384m.
+- Caddy needs nothing extra: it has no default request body limit (do not add `request_body max_size` below 25MB).
+- Not scanned for malware: files are stored as-is in Salesforce (the integration user owns them); the team opens them from the Quote's Files.
+- Logs: one JSON line per stored upload (`file_uploaded`: name, size, type, quote id; never the content).

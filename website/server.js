@@ -2,8 +2,9 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { createSign } from 'node:crypto';
+import { createSign, randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -172,6 +173,7 @@ async function callSalesforceJwt(method, body, query) {
 // ---------------------------------------------------------------------------
 
 const MAX_BODY_BYTES = 16 * 1024;
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const TEN_MIN = 10 * 60 * 1000;
 const GENERIC_ERROR = { success: false, errorMessage: 'Something went wrong. Please try again.' };
 
@@ -233,7 +235,13 @@ export function configFromEnv(env = process.env) {
       post: { max: num('RATE_POST_MAX', 5), windowMs: num('RATE_POST_WINDOW_SEC', 600) * 1000 },
       patch: { max: num('RATE_PATCH_MAX', 30), windowMs: num('RATE_PATCH_WINDOW_SEC', 600) * 1000 },
       messages: { max: num('RATE_MESSAGES_MAX', 120), windowMs: num('RATE_MESSAGES_WINDOW_SEC', 60) * 1000 },
+      upload: { max: num('RATE_UPLOAD_MAX', 10), windowMs: num('RATE_UPLOAD_WINDOW_SEC', 600) * 1000 },
       maxTrackedIps: num('RATE_MAX_TRACKED_IPS', 10000)
+    },
+    upload: {
+      maxBytes: num('UPLOAD_MAX_BYTES', MAX_UPLOAD_BYTES),
+      maxConcurrent: num('UPLOAD_MAX_CONCURRENT', 2),
+      idleTimeoutMs: num('UPLOAD_IDLE_TIMEOUT_SEC', 30) * 1000
     }
   };
 }
@@ -368,6 +376,146 @@ async function readJsonBody(req) {
   return parsed;
 }
 
+
+// ---------------------------------------------------------------------------
+// File uploads (RFQ drawings, stack-ups, Gerbers)
+// ---------------------------------------------------------------------------
+
+// extension -> kind of content it must start with (see contentMatches)
+const UPLOAD_TYPES = {
+  pdf: 'pdf', doc: 'ole', docx: 'zip', xls: 'ole', xlsx: 'zip', csv: 'text', jpg: 'jpg', jpeg: 'jpg', png: 'png',
+  zip: 'zip', gbr: 'text', tgz: 'gz'
+};
+const GERBER_EXTENSIONS = new Set(['zip', 'gbr', 'tgz']);
+// "invoice.exe.pdf": the inner extension of a double-extension name must not be an executable or script type.
+const DANGEROUS_INNER = new Set([
+  'exe', 'bat', 'cmd', 'com', 'scr', 'pif', 'js', 'jse', 'mjs', 'vbs', 'vbe', 'wsf', 'ps1', 'sh', 'bash', 'jar', 'msi', 'dll', 'hta',
+  'lnk', 'reg', 'html', 'htm', 'xhtml', 'svg', 'php', 'py', 'pl', 'cgi', 'asp', 'aspx', 'jsp', 'apk', 'app', 'dmg', 'docm', 'xlsm'
+]);
+const MAX_NAME_CHARS = 100;
+
+function checkFileName(rawHeader) {
+  if (typeof rawHeader !== 'string' || !rawHeader) throw new HttpError(400, 'File name is required.');
+  let name;
+  try {
+    name = decodeURIComponent(rawHeader);
+  } catch {
+    throw new HttpError(400, 'File name is not valid.');
+  }
+  if (!name.trim() || name.length > 255 || /[\\/\u0000-\u001f\u007f]/.test(name)) throw new HttpError(400, 'File name is not valid.');
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+  if (!Object.prototype.hasOwnProperty.call(UPLOAD_TYPES, ext)) throw new HttpError(415, 'This file type is not accepted.');
+  const inner = name.slice(0, dot).match(/\.([A-Za-z0-9]{1,8})$/);
+  if (inner && DANGEROUS_INNER.has(inner[1].toLowerCase())) throw new HttpError(415, 'This file type is not accepted.');
+  let stem = name.slice(0, dot).replace(/[^\p{L}\p{N}._() \-]/gu, '_').replace(/\s+/g, ' ').trim().replace(/^\.+/, '');
+  if (!stem) stem = 'file';
+  stem = stem.slice(0, MAX_NAME_CHARS - ext.length - 1);
+  return { name: `${stem}.${ext}`, ext };
+}
+
+const MAGIC_PREFIX = {
+  pdf: [0x25, 0x50, 0x44, 0x46, 0x2d],
+  zip: [0x50, 0x4b, 0x03, 0x04],
+  png: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+  jpg: [0xff, 0xd8, 0xff],
+  gz: [0x1f, 0x8b],
+  ole: [0xd0, 0xcf, 0x11, 0xe0]
+};
+function contentMatches(kind, buf) {
+  if (kind === 'text') {
+    // valid UTF-8 and no control characters other than TAB, LF, FF, CR (so no NUL and no binary headers)
+    for (let i = 0; i < buf.length; i++) {
+      const b = buf[i];
+      if (b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0c && b !== 0x0d) return false;
+      if (b === 0x7f) return false;
+    }
+    try {
+      new TextDecoder('utf-8', { fatal: true }).decode(buf);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  const prefix = MAGIC_PREFIX[kind];
+  return buf.length >= prefix.length && prefix.every((b, i) => buf[i] === b);
+}
+
+function formatSize(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1023.5 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function readUploadBody(req, declared, max, idleMs = 30000) {
+  const known = Number.isFinite(declared) && declared > 0;
+  const buf = known ? Buffer.allocUnsafe(declared) : null; // exact allocation: no second copy for the common (browser) case
+  const chunks = [];
+  let size = 0;
+  const it = req[Symbol.asyncIterator]();
+  for (;;) {
+    // no data for idleMs: give up (a slow client must not hold an upload slot)
+    let timer;
+    const idle = new Promise((_, reject) => { timer = setTimeout(() => reject(new HttpError(408, 'Something went wrong. Please try again.')), idleMs); });
+    let step;
+    try {
+      step = await Promise.race([it.next(), idle]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (step.done) break;
+    const chunk = step.value;
+    if (size + chunk.length > max) throw new HttpError(413, 'File too large. The limit is 25 MB per file.');
+    if (buf) {
+      if (size + chunk.length > declared) throw new HttpError(400, 'Request body does not match Content-Length.');
+      chunk.copy(buf, size);
+    } else {
+      chunks.push(chunk);
+    }
+    size += chunk.length;
+  }
+  if (buf) {
+    if (size !== declared) throw new HttpError(400, 'Request body does not match Content-Length.');
+    return buf;
+  }
+  return Buffer.concat(chunks, size);
+}
+
+// Stores the file as a Salesforce File (ContentVersion) published to the quote. Multipart upload with
+// the binary part streamed from the buffer (no base64, no extra copy).
+async function uploadFileJwt({ quoteId, name, buffer }) {
+  const session = await jwtSession();
+  const boundary = 'htupl' + randomUUID().replace(/-/g, '');
+  const entity = JSON.stringify({ FirstPublishLocationId: quoteId, PathOnClient: name, Title: name });
+  const asciiName = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  const head = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="entity_content"\r\nContent-Type: application/json\r\n\r\n${entity}\r\n` +
+    `--${boundary}\r\nContent-Disposition: form-data; name="VersionData"; filename="${asciiName}"\r\nContent-Type: application/octet-stream\r\n\r\n`
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  async function* parts() { yield head; yield buffer; yield tail; }
+  const res = await fetch(`${session.instanceUrl}/services/data/v62.0/sobjects/ContentVersion`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${session.token}`,
+      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      'Content-Length': String(head.length + buffer.length + tail.length)
+    },
+    body: Readable.from(parts()),
+    duplex: 'half',
+    signal: AbortSignal.timeout(120000)
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { /* not json */ }
+  if (!res.ok || !json || json.success !== true) throw new Error(`ContentVersion insert failed: ${res.status} ${text.slice(0, 300)}`);
+  return { id: json.id };
+}
+
+async function uploadFileUnsupported() {
+  throw new Error('File upload needs SF_AUTH=jwt');
+}
+
 function resolveStatic(publicDir, pathname) {
   let decoded;
   try {
@@ -385,7 +533,7 @@ function resolveStatic(publicDir, pathname) {
   return absolute;
 }
 
-export function createServer({ callSalesforce, notifyAgent: notify = () => {}, now = () => Date.now(), log = (line) => console.log(line), config = {} } = {}) {
+export function createServer({ callSalesforce, uploadFile = uploadFileUnsupported, notifyAgent: notify = () => {}, now = () => Date.now(), log = (line) => console.log(line), config = {} } = {}) {
   const defaults = configFromEnv({});
   const cfg = {
     publicDir: config.publicDir || path.join(__dirname, 'public'),
@@ -394,10 +542,13 @@ export function createServer({ callSalesforce, notifyAgent: notify = () => {}, n
       post: { ...defaults.limits.post, ...(config.limits && config.limits.post) },
       patch: { ...defaults.limits.patch, ...(config.limits && config.limits.patch) },
       messages: { ...defaults.limits.messages, ...(config.limits && config.limits.messages) },
+      upload: { ...defaults.limits.upload, ...(config.limits && config.limits.upload) },
       maxTrackedIps: (config.limits && config.limits.maxTrackedIps) || defaults.limits.maxTrackedIps
-    }
+    },
+    upload: { ...defaults.upload, ...(config.upload || {}) }
   };
   const limiter = createRateLimiter(cfg.limits, now);
+  let uploadsInFlight = 0;
 
   const emit = (obj) => log(JSON.stringify({ ts: new Date(now()).toISOString(), ...obj }));
 
@@ -465,9 +616,11 @@ export function createServer({ callSalesforce, notifyAgent: notify = () => {}, n
           return send(res, 200, { success: true }); // honeypot: pretend it worked
         }
         if (req.method === 'POST') {
+          if (body.filesPending != null && typeof body.filesPending !== 'boolean') throw new HttpError(400, 'filesPending must be a boolean.');
           const data = await upstream(req, res, 'POST', validateQuote(body));
           if (!data) return;
-          notify('rfq_created', data.conversationId, data.quoteId);
+          // the widget uploads files right after: the last upload notifies the agent, so it answers once
+          if (body.filesPending !== true) notify('rfq_created', data.conversationId, data.quoteId);
           return send(res, 200, data);
         }
         const patch = validatePatch(body);
@@ -475,6 +628,67 @@ export function createServer({ callSalesforce, notifyAgent: notify = () => {}, n
         if (!data) return;
         notify('customer_message', patch.conversationId, patch.quoteId);
         return send(res, 200, data);
+      }
+
+      if (pathname === '/api/quote/files') {
+        if (req.method !== 'POST') return fail(res, 405, 'Method not allowed.', { Allow: 'POST' });
+        if (limited(req, res, 'upload')) return;
+        const ids = validateIds({ conversationId: url.searchParams.get('conversationId'), quoteId: url.searchParams.get('quoteId') });
+        if (!/^application\/octet-stream\s*(;|$)/.test(String(req.headers['content-type'] || '').toLowerCase())) {
+          throw new HttpError(415, 'Content-Type must be application/octet-stream.');
+        }
+        const file = checkFileName(req.headers['x-file-name']);
+        const declared = req.headers['content-length'] === undefined ? NaN : Number(req.headers['content-length']);
+        if (Number.isFinite(declared) && declared > cfg.upload.maxBytes) throw new HttpError(413, 'File too large. The limit is 25 MB per file.');
+        if (declared === 0) throw new HttpError(400, 'The file is empty.');
+        if (uploadsInFlight >= cfg.upload.maxConcurrent) {
+          return fail(res, 429, 'Too many requests. Please try again later.', { 'Retry-After': '10' });
+        }
+        uploadsInFlight += 1;
+        try {
+          // 1) the conversation/quote pair must match before a single byte is read or stored
+          let pair;
+          try {
+            pair = await callSalesforce('GET', null, new URLSearchParams({ ...ids, verify: '1' }).toString());
+          } catch (error) {
+            emit({ level: 'error', msg: 'upstream_error', method: 'GET', path: pathname, detail: String((error && error.message) || error).slice(0, 300) });
+            return send(res, 502, GENERIC_ERROR);
+          }
+          if (!pair || pair.success !== true) return fail(res, 404, 'Conversation not found.');
+          // 2) body, streamed with a hard cap; content must match the extension
+          const buffer = await readUploadBody(req, declared, cfg.upload.maxBytes, cfg.upload.idleTimeoutMs);
+          if (!buffer.length) throw new HttpError(400, 'The file is empty.');
+          if (!contentMatches(UPLOAD_TYPES[file.ext], buffer)) throw new HttpError(415, 'The file content does not match its type.');
+          // 3) the file, on the quote
+          try {
+            await uploadFile({ quoteId: ids.quoteId, name: file.name, buffer });
+          } catch (error) {
+            emit({ level: 'error', msg: 'upload_failed', name: file.name, size: buffer.length, type: file.ext, quoteId: ids.quoteId, detail: String((error && error.message) || error).slice(0, 300) });
+            return send(res, 502, GENERIC_ERROR);
+          }
+          emit({ level: 'info', msg: 'file_uploaded', name: file.name, size: buffer.length, type: file.ext, quoteId: ids.quoteId });
+          // 4) the conversation message (+ Gerbers flag) and the agent
+          const gerbers = GERBER_EXTENSIONS.has(file.ext);
+          const patch = { ...ids, message: `\u{1F4CE} Attached: ${file.name} (${formatSize(buffer.length)})` };
+          if (gerbers) patch.gerbersReceived = true;
+          let data = null;
+          try {
+            data = await callSalesforce('PATCH', patch);
+          } catch (error) {
+            emit({ level: 'error', msg: 'upstream_error', method: 'PATCH', path: pathname, detail: String((error && error.message) || error).slice(0, 300) });
+          }
+          if (!data || data.success !== true) {
+            if (data) emit({ level: 'error', msg: 'upstream_unsuccessful', method: 'PATCH', path: pathname, detail: typeof data.errorMessage === 'string' ? data.errorMessage.slice(0, 300) : 'empty or unsuccessful response' });
+            // the file is stored: answering an error would make the client retry and duplicate it
+            emit({ level: 'warn', msg: 'upload_without_message', name: file.name, quoteId: ids.quoteId });
+            return send(res, 200, { success: true, stored: true, messageLogged: false });
+          }
+          // the widget sends more=1 for every file of a batch except the last: one agent reply per batch
+          if (url.searchParams.get('more') !== '1') notify('customer_message', ids.conversationId, ids.quoteId);
+          return send(res, 200, { success: true, file: { name: file.name, size: buffer.length, gerbers } });
+        } finally {
+          uploadsInFlight -= 1;
+        }
       }
 
       if (pathname === '/api/quote/messages') {
@@ -523,7 +737,7 @@ export function createServer({ callSalesforce, notifyAgent: notify = () => {}, n
       return res.end(file);
     } catch (error) {
       if (error instanceof HttpError) {
-        const extra = error.status === 413 ? { Connection: 'close' } : {};
+        const extra = error.status === 413 || error.status === 408 ? { Connection: 'close' } : {};
         return fail(res, error.status, error.message, extra);
       }
       emit({ level: 'error', msg: 'unhandled_error', method: req.method, path: req._path, detail: String((error && error.message) || error).slice(0, 300) });
@@ -549,10 +763,14 @@ function main() {
   const port = Number(process.env.PORT || 4173);
   const server = createServer({
     callSalesforce: callSalesforceDispatch,
+    uploadFile: process.env.SF_AUTH === 'jwt' ? uploadFileJwt : uploadFileUnsupported,
     notifyAgent,
     log: (line) => console.log(line),
     config: configFromEnv()
   });
+  server.requestTimeout = 120000;
+  server.headersTimeout = 30000;
+  server.keepAliveTimeout = 5000;
   server.listen(port, '0.0.0.0', () => {
     logLine({ level: 'info', msg: 'listening', host: '0.0.0.0', port: server.address().port });
   });

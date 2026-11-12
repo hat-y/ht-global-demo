@@ -24,6 +24,8 @@ public with sharing class HtPcbQuoteService {
         public String message;
         public String conversationId;
         public String quoteId;
+        /** True when the message announces a Gerber/ODB++ upload: sets Quote.PCB_Gerbers_Received__c. */
+        public Boolean gerbersReceived;
     }
 
     public static HtPcbQuoteResult startQuote(QuoteRequest req) {
@@ -75,6 +77,16 @@ public with sharing class HtPcbQuoteService {
                 throw new HtPcbQuoteException('message is required');
             }
 
+            Boolean gerbers = req.gerbersReceived == true;
+            if (gerbers && String.isBlank(req.quoteId)) {
+                throw new HtPcbQuoteException('quoteId is required');
+            }
+            // When a quote id comes with the message (the website always sends it), it must belong to
+            // this conversation: a visitor can only write to, and flag, their own quote.
+            if (String.isNotBlank(req.quoteId) && !verifyPair(req.conversationId, req.quoteId)) {
+                throw new HtPcbQuoteException('Conversation not found');
+            }
+
             Conversation__c conversation = [
                 SELECT Id, DisplayName__c, IsClosed__c
                 FROM Conversation__c
@@ -86,6 +98,9 @@ public with sharing class HtPcbQuoteService {
             }
 
             createInboundMessage(conversation.Id, req.message, conversation.DisplayName__c);
+            if (gerbers) {
+                update new Quote(Id = req.quoteId, PCB_Gerbers_Received__c = true);
+            }
 
             // The chat lives in the conversation; the quote comment keeps only the form comment.
             if (String.isNotBlank(req.quoteId)) {
@@ -121,6 +136,20 @@ public with sharing class HtPcbQuoteService {
         String text = html.replaceAll('(?i)<br\\s*/?>', '\n').replaceAll('(?i)</p>\\s*<p[^>]*>', '\n\n');
         text = text.replaceAll('<[^>]+>', '');
         return text.unescapeHtml4();
+    }
+
+    /** True only when the quote exists and its PCB_Conversation_Id__c is exactly this conversation. */
+    public static Boolean verifyPair(String conversationId, String quoteId) {
+        if (String.isBlank(conversationId) || String.isBlank(quoteId)) {
+            return false;
+        }
+        try {
+            Id qId = (Id) quoteId;
+            Id.valueOf(conversationId);
+            return [SELECT COUNT() FROM Quote WHERE Id = :qId AND PCB_Conversation_Id__c = :conversationId] > 0;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     public static HtPcbQuoteMessagesResult getMessages(String conversationId, String quoteId, String after) {

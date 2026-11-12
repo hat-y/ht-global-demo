@@ -57,4 +57,43 @@ private class HtPcbQuoteResourceTest {
         req.params.put('quoteId', '0Q0000000000000AAA');
         System.assertEquals(false, HtPcbQuoteResource.getMessages().success);
     }
+
+    @IsTest
+    static void get_verifyOnly_confirmsThePairWithoutReturningMessages() {
+        callWith('POST', '{"name":"Vera Pair","company":"Verify Boards","email":"vera@verifyboards.example","boardType":"Rigid PCB","quantity":5,"message":"Hello"}');
+        HtPcbQuoteResult created = HtPcbQuoteResource.createQuote();
+        insert new ConversationMessage__c(
+            Conversation__c = created.conversationId, Body__c = 'Team reply', IsInbound__c = false,
+            IsHumanMessage__c = true, SenderDisplayName__c = 'HT Global team', SentDate__c = System.now()
+        );
+        RestRequest req = new RestRequest();
+        req.httpMethod = 'GET';
+        req.params.put('conversationId', created.conversationId);
+        req.params.put('quoteId', created.quoteId);
+        req.params.put('verify', '1');
+        RestContext.request = req;
+        RestContext.response = new RestResponse();
+        HtPcbQuoteMessagesResult ok = HtPcbQuoteResource.getMessages();
+        System.assertEquals(true, ok.success);
+        System.assertEquals(0, ok.messages.size());
+
+        req.params.put('quoteId', '0Q0000000000000AAA');
+        HtPcbQuoteMessagesResult bad = HtPcbQuoteResource.getMessages();
+        System.assertEquals(false, bad.success);
+        System.assertEquals('Conversation not found', bad.errorMessage);
+    }
+
+    @IsTest
+    static void patch_gerbersReceived_setsTheFlag() {
+        callWith('POST', '{"name":"Gus Gerber","company":"Gerber Boards","email":"gus@gerberboards.example","boardType":"Rigid PCB","quantity":5,"message":"Hello"}');
+        HtPcbQuoteResult created = HtPcbQuoteResource.createQuote();
+        callWith('PATCH', JSON.serialize(new Map<String, Object>{
+            'conversationId' => created.conversationId,
+            'quoteId' => created.quoteId,
+            'message' => 'Attached: board.gbr (3 KB)',
+            'gerbersReceived' => true
+        }));
+        System.assertEquals(true, HtPcbQuoteResource.appendMessage().success);
+        System.assertEquals(true, [SELECT PCB_Gerbers_Received__c FROM Quote WHERE Id = :created.quoteId].PCB_Gerbers_Received__c);
+    }
 }

@@ -5,6 +5,8 @@
  * Step 2 (chat): free text via PATCH /api/quote; replies (n8n assistant + Sellium team) arrive by
  *                polling GET /api/quote/messages (4 s, paused while hidden, 15 s after 2 min idle,
  *                deduped by id, rendered with textContent only).
+ * Files: the paperclip in the composer and the optional file field of the Details step upload the raw file to
+ *        POST /api/quote/files (type, size and count are checked here too; the server is the authority).
  * State (quoteId, conversationId, thread, draft) lives in sessionStorage so it survives navigation.
  */
 (function () {
@@ -22,6 +24,12 @@
   var LAYERS = ['1', '2', '4', '6', '8', '10', '12', '14', '16', '18', '20'];
   var LEAD_TIMES = ['3', '4', '5', '6', '7', '10', '15'];
   var STEP_TITLES = ['Contact', 'Board', 'Details'];
+  var FILE_EXT = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'zip', 'gbr', 'tgz'];
+  var FILE_ACCEPT = FILE_EXT.map(function (e) { return '.' + e; }).join(',');
+  var FILE_TYPES_TEXT = 'pdf, doc, docx, xls, xlsx, csv, jpg, png, zip, gbr or tgz';
+  var MAX_FILE_BYTES = 25 * 1024 * 1024;
+  var MAX_FILES = 5;
+  var RISKY_INNER = ['exe', 'bat', 'cmd', 'com', 'scr', 'pif', 'js', 'jse', 'mjs', 'vbs', 'vbe', 'wsf', 'ps1', 'sh', 'bash', 'jar', 'msi', 'dll', 'hta', 'lnk', 'reg', 'html', 'htm', 'xhtml', 'svg', 'php', 'py', 'pl', 'cgi', 'asp', 'aspx', 'jsp', 'apk', 'app', 'dmg', 'docm', 'xlsm'];
 
   var scriptEl = document.currentScript;
   var autoOpen = !!(scriptEl && scriptEl.hasAttribute('data-autoopen'));
@@ -103,6 +111,8 @@
   var ICON_MORE = '<svg xmlns="' + SVG_NS + '" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
   var ICON_SEND = '<svg xmlns="' + SVG_NS + '" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 5l7 7-7 7"/></svg>';
 
+  var ICON_CLIP = '<svg xmlns="' + SVG_NS + '" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3"/></svg>';
+
   // ---------- DOM skeleton ----------
   var root = h('div', { id: 'htcw' });
   var launcher = h('button', {
@@ -129,7 +139,11 @@
   var composerErr = h('p', { class: 'htcw-err htcw-composer-err', role: 'alert', hidden: true });
   var input = h('textarea', { class: 'htcw-input', rows: '1', maxlength: '4000', placeholder: 'Type your message…', 'aria-label': 'Message to the HT Global assistant' });
   var sendBtn = h('button', { type: 'submit', class: 'htcw-send', 'aria-label': 'Send message' }, svg(ICON_SEND));
-  var composer = h('form', { class: 'htcw-composer', hidden: true, novalidate: true }, composerErr, h('div', { class: 'htcw-row' }, input, sendBtn));
+  var clipBtn = h('button', { type: 'button', class: 'htcw-clip', 'aria-label': 'Attach files (' + FILE_TYPES_TEXT + '; up to 25 MB each, 5 at a time)' }, svg(ICON_CLIP));
+  var fileInput = h('input', { type: 'file', class: 'htcw-fileinput', multiple: true, accept: FILE_ACCEPT, tabindex: '-1', 'aria-hidden': 'true' });
+  var fileTray = h('ul', { class: 'htcw-files', 'aria-label': 'Attachments', hidden: true });
+  var fileLive = h('p', { class: 'htcw-sr', role: 'status', 'aria-live': 'polite' });
+  var composer = h('form', { class: 'htcw-composer', hidden: true, novalidate: true }, composerErr, fileTray, fileLive, h('div', { class: 'htcw-row' }, clipBtn, fileInput, input, sendBtn));
   var panel = h('section', {
     id: 'htcw-panel', class: 'htcw-panel', role: 'dialog', 'aria-modal': 'false', 'aria-labelledby': 'htcw-title', hidden: true
   }, header, log, typing, composer);
@@ -237,6 +251,73 @@
   }
 
   var uid = 0;
+
+  // ---------- files: shared rules ----------
+  var formFiles = []; // files chosen in the Details step, uploaded right after the quote is created
+  function fmtSize(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1023.5 * 1024) return Math.round(n / 1024) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+  // returns '' when the file is acceptable, otherwise the English reason
+  function checkFile(f) {
+    var name = f.name || '';
+    var dot = name.lastIndexOf('.');
+    var ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+    var inner = name.slice(0, Math.max(dot, 0)).match(/\.([A-Za-z0-9]{1,8})$/);
+    if (FILE_EXT.indexOf(ext) === -1 || (inner && RISKY_INNER.indexOf(inner[1].toLowerCase()) !== -1)) {
+      return name + ' isn\u2019t accepted. Use ' + FILE_TYPES_TEXT + '.';
+    }
+    if (f.size === 0) return name + ' is empty.';
+    if (f.size > MAX_FILE_BYTES) return name + ' is ' + fmtSize(f.size) + '. The limit is 25 MB per file.';
+    return '';
+  }
+  // keeps what is acceptable, up to MAX_FILES in total, and says why the rest was left out
+  function pickFiles(list, already) {
+    var ok = [], errors = [];
+    for (var i = 0; i < list.length; i++) {
+      var why = checkFile(list[i]);
+      if (why) { errors.push(why); continue; }
+      if (already + ok.length >= MAX_FILES) { errors.push('You can attach up to 5 files at a time. ' + list[i].name + ' was left out.'); continue; }
+      ok.push(list[i]);
+    }
+    return { ok: ok, errors: errors };
+  }
+
+  function fileField() {
+    var id = 'htcw-f-' + (++uid);
+    var helpId = id + '-help';
+    var errId = id + '-err';
+    var control = h('input', { type: 'file', id: id, multiple: true, accept: FILE_ACCEPT, 'aria-describedby': helpId + ' ' + errId });
+    var help = h('p', { class: 'htcw-help', id: helpId, text: FILE_TYPES_TEXT + ' \u00b7 up to 25 MB each \u00b7 max 5 files' });
+    var err = h('p', { class: 'htcw-err', id: errId, role: 'alert', hidden: true });
+    var list = h('ul', { class: 'htcw-picked', 'aria-label': 'Files to attach' });
+    function renderList() {
+      list.textContent = '';
+      formFiles.forEach(function (f) {
+        var rm = h('button', { type: 'button', class: 'htcw-link', 'aria-label': 'Remove ' + f.name, text: 'Remove' });
+        rm.addEventListener('click', function () {
+          formFiles.splice(formFiles.indexOf(f), 1);
+          renderList();
+          control.focus();
+        });
+        list.appendChild(h('li', null, h('span', { class: 'htcw-picked-name', text: f.name + ' (' + fmtSize(f.size) + ')' }), rm));
+      });
+    }
+    control.addEventListener('change', function () {
+      var res = pickFiles(Array.prototype.slice.call(control.files || []), formFiles.length);
+      res.ok.forEach(function (f) { formFiles.push(f); });
+      control.value = '';
+      err.textContent = res.errors.join(' ');
+      err.hidden = res.errors.length === 0;
+      renderList();
+    });
+    renderList();
+    return h('div', { class: 'htcw-field htcw-full htcw-filefield' },
+      h('label', { for: id }, 'Drawings, stack-up or Gerbers', h('span', { class: 'htcw-opt', text: ' (optional)' })),
+      control, help, err, list);
+  }
+
   function field(opts) {
     var id = 'htcw-f-' + (++uid);
     var errId = id + '-err';
@@ -312,6 +393,7 @@
         ['ITAR/EAR', 'ITAR/EAR controlled']
       ]));
       add(field({ name: 'comment', label: 'Anything else?', kind: 'textarea', placeholder: 'Finish, stackup, impedance, special requirements', full: true }));
+      grid.appendChild(fileField());
     }
 
     var status = h('p', { class: 'htcw-err htcw-card-err', role: 'alert', hidden: true });
@@ -415,6 +497,8 @@
       message: (d.comment || '').trim() || null,
       website: honeypotValue()
     };
+    // files follow right after: the last upload (not quote creation) wakes the assistant, so it answers once
+    if (formFiles.length) payload.filesPending = true;
     status.hidden = true;
     button.disabled = true;
     button.textContent = 'Opening your quote…';
@@ -455,6 +539,7 @@
     schedulePoll(POLL_FAST_MS);
     updateTyping();
     input.focus();
+    if (formFiles.length) uploadBatch(formFiles.splice(0, formFiles.length), true);
   }
 
   function renderChat() {
@@ -531,6 +616,137 @@
     input.style.height = Math.min(input.scrollHeight, 110) + 'px';
   }
   input.addEventListener('input', autoGrow);
+
+  // ---------- file uploads (chat) ----------
+  var uploadsBusy = 0;
+  function setBusy(delta) {
+    uploadsBusy += delta;
+    clipBtn.disabled = uploadsBusy > 0;
+    clipBtn.classList.toggle('htcw-busy', uploadsBusy > 0);
+  }
+  function announce(text) { fileLive.textContent = ''; setTimeout(function () { fileLive.textContent = text; }, 30); }
+  function trayVisibility() { fileTray.hidden = !fileTray.children.length; }
+
+  function addRow(file) {
+    var name = h('span', { class: 'htcw-file-name', text: file.name + ' (' + fmtSize(file.size) + ')' });
+    var bar = h('progress', { class: 'htcw-file-bar', max: '100', value: '0', 'aria-label': 'Uploading ' + file.name });
+    var status = h('span', { class: 'htcw-file-status', text: 'Waiting…' });
+    var retry = h('button', { type: 'button', class: 'htcw-link', text: 'Retry', hidden: true });
+    var drop = h('button', { type: 'button', class: 'htcw-link', 'aria-label': 'Dismiss ' + file.name, text: 'Dismiss', hidden: true });
+    var li = h('li', { class: 'htcw-file' }, name, bar, status, h('span', { class: 'htcw-file-actions' }, retry, drop));
+    fileTray.appendChild(li);
+    trayVisibility();
+    scrollDown();
+    var row = {
+      file: file, li: li, retry: retry,
+      uploading: function () { bar.hidden = false; retry.hidden = true; drop.hidden = true; li.classList.remove('htcw-file-failed'); },
+      progress: function (p) { bar.value = Math.round(p * 100); status.textContent = 'Uploading ' + Math.round(p * 100) + '%'; },
+      failed: function (why) { bar.hidden = true; status.textContent = why; li.classList.add('htcw-file-failed'); retry.hidden = false; drop.hidden = false; },
+      done: function () { li.remove(); trayVisibility(); }
+    };
+    drop.addEventListener('click', function () { li.remove(); trayVisibility(); input.focus(); });
+    retry.addEventListener('click', async function () {
+      if (uploadsBusy) return;
+      setBusy(1);
+      try { await sendFile(file, row, false); } finally { setBusy(-1); }
+    });
+    return row;
+  }
+
+  function failureText(file, status, json) {
+    var msg = json && typeof json.errorMessage === 'string' ? json.errorMessage : '';
+    if (status === 413) return file.name + ' is too large. The limit is 25 MB per file.';
+    if (status === 415 || status === 400 || status === 429) return msg || (file.name + ' could not be attached.');
+    if (status === 404) return 'This quote can\u2019t be found. Start a new quote from the menu.';
+    return 'Something went wrong. Please try again.';
+  }
+
+  // Resolves true when the file is stored. more=1 tells the server this is not the last file of the batch,
+  // so the assistant answers once per batch instead of once per file.
+  function sendFile(file, row, more) {
+    var convo = S.conversationId, quote = S.quoteId;
+    return new Promise(function (resolve) {
+      row.uploading();
+      row.progress(0);
+      announce('Uploading ' + file.name);
+      var xhr = new XMLHttpRequest();
+      var query = 'conversationId=' + encodeURIComponent(convo) + '&quoteId=' + encodeURIComponent(quote) + (more ? '&more=1' : '');
+      xhr.open('POST', '/api/quote/files?' + query);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+      xhr.timeout = 180000;
+      xhr.upload.onprogress = function (e) { if (e.lengthComputable) row.progress(e.loaded / e.total); };
+      function fail(why) { row.failed(why); announce(file.name + ' failed. ' + why); resolve(false); }
+      xhr.onerror = function () { fail('Network error. Check your connection and retry.'); };
+      xhr.ontimeout = function () { fail('The upload timed out. Retry.'); };
+      xhr.onload = function () {
+        var json = null;
+        try { json = JSON.parse(xhr.responseText); } catch (e) { /* not json */ }
+        if (xhr.status === 200 && json && json.success) {
+          row.done();
+          if (convo === S.conversationId) {
+            addEntry({ who: 'user', text: '\uD83D\uDCCE ' + file.name + ' (' + fmtSize(file.size) + ')' });
+            S.pendingSince = Date.now();
+            save();
+            lastActivity = Date.now();
+            updateTyping();
+            schedulePoll(POLL_FAST_MS);
+          }
+          announce(file.name + ' attached.');
+          // 'notified': the server logged the message and (unless more=1) woke the assistant; 'stored': file kept, no message
+          resolve(json.stored && json.messageLogged === false ? 'stored' : 'notified');
+        } else {
+          fail(failureText(file, xhr.status, json));
+        }
+      };
+      xhr.send(file);
+    });
+  }
+
+  // ensureReply: the quote was created with filesPending, so no one has woken the assistant yet. If the batch
+  // ends without a successful last upload doing it, one normal chat message does.
+  async function uploadBatch(files, ensureReply) {
+    if (!files.length || !S.conversationId) return;
+    var convo = S.conversationId, quote = S.quoteId;
+    var notified = false;
+    setBusy(1);
+    try {
+      for (var i = 0; i < files.length; i++) {
+        var last = i === files.length - 1;
+        var r = await sendFile(files[i], addRow(files[i]), !last);
+        if (last && r === 'notified') notified = true;
+      }
+      if (ensureReply && !notified && convo === S.conversationId) {
+        var text = 'I tried to attach files but some could not be uploaded.';
+        try {
+          var res = await fetch('/api/quote', {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversationId: convo, quoteId: quote, message: text })
+          });
+          var result = await res.json();
+          if (result.success) {
+            addEntry({ who: 'user', text: text });
+            S.pendingSince = Date.now();
+            save();
+            lastActivity = Date.now();
+            updateTyping();
+            schedulePoll(POLL_FAST_MS);
+          }
+        } catch (e) { /* the failed rows already show Retry */ }
+      }
+    } finally {
+      setBusy(-1);
+    }
+  }
+
+  clipBtn.addEventListener('click', function () { if (!uploadsBusy) fileInput.click(); });
+  fileInput.addEventListener('change', function () {
+    var res = pickFiles(Array.prototype.slice.call(fileInput.files || []), 0);
+    fileInput.value = '';
+    if (res.errors.length) { composerErr.textContent = res.errors.join(' '); composerErr.hidden = false; }
+    else composerErr.hidden = true;
+    if (res.ok.length) uploadBatch(res.ok);
+  });
 
   // ---------- polling (T5 logic) ----------
   var pollTimer = null;
@@ -684,6 +900,8 @@
     pollAfter = null; unread = 0; renderBadge();
     input.value = ''; autoGrow();
     composerErr.hidden = true;
+    formFiles = [];
+    fileTray.textContent = ''; trayVisibility();
     save();
     renderForm();
     if (wasOpen && S.intro >= 3) focusFirstIn(activeCard);

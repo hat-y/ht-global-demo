@@ -27,13 +27,18 @@ export function makePublicDir() {
 }
 
 export async function start(overrides = {}) {
-  const calls = { sf: [], notify: [], logs: [] };
+  const calls = { sf: [], notify: [], logs: [], upload: [] };
   const deps = {
     callSalesforce: async (method, body, query) => {
       calls.sf.push({ method, body, query });
       if (overrides.sfImpl) return overrides.sfImpl(method, body, query);
       if (method === 'GET') return { success: true, messages: [] };
       return { success: true, conversationId: CID, quoteId: QID };
+    },
+    uploadFile: async (file) => {
+      calls.upload.push(file);
+      if (overrides.uploadImpl) return overrides.uploadImpl(file);
+      return { id: '068g7000000AbCdAAK' };
     },
     notifyAgent: (...args) => calls.notify.push(args),
     now: overrides.now || (() => Date.now()),
@@ -70,3 +75,42 @@ export function raw(port, method, rawPath, headers = {}) {
     req.end();
   });
 }
+
+// raw file upload: resolves with the response as soon as it arrives (the server may answer before the body is sent)
+export function upload(base, { query, headers = {}, body, chunked = false }) {
+  const url = new URL(base + '/api/quote/files' + (query === undefined ? `?conversationId=${CID}&quoteId=${QID}` : query));
+  return new Promise((resolve, reject) => {
+    const h = { 'Content-Type': 'application/octet-stream', ...headers };
+    if (!chunked && body) h['Content-Length'] = String(body.length);
+    const req = http.request({ host: url.hostname, port: url.port, method: 'POST', path: url.pathname + url.search, headers: h }, (res) => {
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => { let j = null; try { j = JSON.parse(data); } catch {} resolve({ status: res.statusCode, headers: res.headers, body: data, json: j }); });
+    });
+    req.on('error', (e) => { if (!req.res) reject(e); });
+    if (body) {
+      const step = 1024 * 1024;
+      let i = 0;
+      const pump = () => {
+        while (i < body.length) {
+          const ok = req.write(body.subarray(i, i + step));
+          i += step;
+          if (!ok) { req.once('drain', pump); return; }
+        }
+        req.end();
+      };
+      pump();
+    } else req.end();
+  });
+}
+
+export const MAGIC = {
+  pdf: () => Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n'),
+  zip: () => Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('rest-of-zip')]),
+  png: () => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('png')]),
+  jpg: () => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('jfif')]),
+  gz: () => Buffer.concat([Buffer.from([0x1f, 0x8b, 0x08]), Buffer.from('gzdata')]),
+  ole: () => Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.from('ole')]),
+  text: () => Buffer.from('G04 Gerber test*\nG75*\n%FSLAX24Y24*%\nM02*\n'),
+  csv: () => Buffer.from('layer,thickness\nL1,0.035\n')
+};

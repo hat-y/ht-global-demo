@@ -130,6 +130,30 @@
 #htcw .htcw-send:focus-visible{outline:2px solid var(--htcw-blue);outline-offset:2px}
 #htcw .htcw-send:disabled{opacity:.6;cursor:progress}
 
+/* attachments */
+#htcw .htcw-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+#htcw .htcw-fileinput{display:none}
+#htcw .htcw-clip{display:flex;align-items:center;justify-content:center;width:44px;height:44px;padding:0;margin:0;flex:none;background:#fff;color:var(--htcw-blue);border:1px solid var(--htcw-line);border-radius:1px;cursor:pointer;transition:background-color .15s,border-color .15s}
+#htcw .htcw-clip:hover{background:var(--htcw-bg);border-color:var(--htcw-blue)}
+#htcw .htcw-clip:focus-visible{outline:2px solid var(--htcw-blue);outline-offset:2px}
+#htcw .htcw-clip:disabled{opacity:.5;cursor:progress}
+#htcw .htcw-files{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-direction:column;gap:6px;max-height:132px;overflow-y:auto}
+#htcw .htcw-file{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center;padding:6px 8px;background:var(--htcw-bg);border-left:3px solid var(--htcw-blue);border-radius:2px;font-size:12px;line-height:1.35}
+#htcw .htcw-file-name{grid-column:1/-1;font-weight:600;overflow-wrap:anywhere}
+#htcw .htcw-file-bar{width:100%;height:6px;grid-column:1/-1;accent-color:var(--htcw-blue)}
+#htcw .htcw-file-status{color:#43606f}
+#htcw .htcw-file-actions{display:inline-flex;gap:10px}
+#htcw .htcw-file-failed{border-left-color:var(--htcw-err);background:#fff1f1}
+#htcw .htcw-file-failed .htcw-file-status{color:var(--htcw-err);font-weight:500}
+#htcw .htcw-link{padding:2px 0;margin:0;background:none;border:0;color:var(--htcw-blue);font:600 12px/1.3 Poppins,Arial,sans-serif;text-decoration:underline;cursor:pointer}
+#htcw .htcw-link:hover{color:var(--htcw-blue-deep)}
+#htcw .htcw-link:focus-visible{outline:2px solid var(--htcw-blue);outline-offset:2px}
+#htcw .htcw-help{margin:5px 0 0;font:300 11.5px/1.4 Poppins,Arial,sans-serif;color:#5a7686}
+#htcw .htcw-filefield input[type=file]{height:auto;padding:7px 8px;font-size:12.5px}
+#htcw .htcw-picked{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+#htcw .htcw-picked li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 8px;background:var(--htcw-bg);border-radius:2px;font-size:12.5px}
+#htcw .htcw-picked-name{overflow-wrap:anywhere}
+
 /* /quote page call-to-action that replaces the old inline shell */
 .ht-quote-cta{max-width:720px;margin:24px auto 48px;padding:0 16px;font-family:Poppins,Arial,sans-serif;color:#023047;text-align:center}
 .ht-quote-cta p{margin:0 0 18px;font-size:16px;font-weight:300}

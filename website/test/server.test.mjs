@@ -25,6 +25,21 @@ test('POST /api/quote happy path returns the Salesforce result and notifies rfq_
   assert.deepEqual(s.calls.notify, [['rfq_created', CID, QID]]);
 }));
 
+test('POST /api/quote with filesPending:true does not notify the agent and keeps filesPending out of the Salesforce body', () => withServer({}, async (s) => {
+  const res = await json(s.base, 'POST', '/api/quote', { ...validQuote, filesPending: true });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { success: true, conversationId: CID, quoteId: QID });
+  assert.equal(s.calls.notify.length, 0);
+  assert.equal('filesPending' in s.calls.sf[0].body, false);
+}));
+
+test('POST /api/quote with filesPending:false or absent still notifies rfq_created', () => withServer({}, async (s) => {
+  await json(s.base, 'POST', '/api/quote', { ...validQuote, filesPending: false });
+  await json(s.base, 'POST', '/api/quote', validQuote);
+  assert.deepEqual(s.calls.notify, [['rfq_created', CID, QID], ['rfq_created', CID, QID]]);
+  assert.equal(s.calls.sf.some((c) => 'filesPending' in c.body), false);
+}));
+
 test('PATCH /api/quote happy path notifies customer_message', () => withServer({}, async (s) => {
   const res = await json(s.base, 'PATCH', '/api/quote', { conversationId: CID, quoteId: QID, message: 'hello' });
   assert.equal(res.status, 200);
