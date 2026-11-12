@@ -17,7 +17,8 @@ public with sharing class HtQuoteConversationController {
         @AuraEnabled public List<Message> messages = new List<Message>();
     }
 
-    @AuraEnabled(cacheable=false)
+    // cacheable=true is required: the htQuoteConversation LWC reads this with @wire (refreshApex reloads it).
+    @AuraEnabled(cacheable=true)
     public static Thread getThread(Id quoteId) {
         Thread t = new Thread();
         if (quoteId == null) {
