@@ -137,6 +137,20 @@ private class HtPcbQuoteServiceTest {
     }
 
     @IsTest
+    static void getMessages_returnsPlainTextNotStoredHtml() {
+        // Sellium stores Body__c as escaped HTML (It's -> It&#39;s, & -> &amp;); the website shows plain text.
+        HtPcbQuoteResult s = startForPolling('poll-html@example.com');
+        outbound(s.conversationId, 'It\'s <b>ready</b> & "done".', false, true);
+        outbound(s.conversationId, 'Line one<br>Line two', false, true);
+
+        HtPcbQuoteMessagesResult r = HtPcbQuoteService.getMessages(s.conversationId, s.quoteId, null);
+
+        System.assertEquals(2, r.messages.size());
+        System.assertEquals('It\'s ready & "done".', r.messages[0].body);
+        System.assertEquals('Line one\nLine two', r.messages[1].body);
+    }
+
+    @IsTest
     static void getMessages_marksAgentMessages() {
         HtPcbQuoteResult s = startForPolling('poll2@example.com');
         outbound(s.conversationId, 'Agent answer', false, false);

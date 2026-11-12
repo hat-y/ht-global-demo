@@ -118,6 +118,21 @@ public with sharing class HtPcbQuoteService {
      * Customer-visible replies (team or agent) on a web quote conversation.
      * The conversationId/quoteId pair must match, otherwise nothing is returned.
      */
+    /**
+     * Sellium stores Body__c as sanitized HTML (It's -> It&#39;s, & -> &amp;, simple tags allowed).
+     * The website renders plain text (textContent), so turn line breaks into newlines, drop tags and
+     * decode entities here.
+     */
+    @TestVisible
+    private static String toPlainText(String html) {
+        if (html == null) {
+            return null;
+        }
+        String text = html.replaceAll('(?i)<br\\s*/?>', '\n').replaceAll('(?i)</p>\\s*<p[^>]*>', '\n\n');
+        text = text.replaceAll('<[^>]+>', '');
+        return text.unescapeHtml4();
+    }
+
     public static HtPcbQuoteMessagesResult getMessages(String conversationId, String quoteId, String after) {
         HtPcbQuoteMessagesResult res = new HtPcbQuoteMessagesResult();
         res.serverTime = System.now();
@@ -168,7 +183,7 @@ public with sharing class HtPcbQuoteService {
             for (ConversationMessage__c row : rows) {
                 HtPcbQuoteMessagesResult.Item item = new HtPcbQuoteMessagesResult.Item();
                 item.id = row.Id;
-                item.body = row.Body__c;
+                item.body = toPlainText(row.Body__c);
                 item.fromAgent = row.IsAgentMessage__c == true;
                 item.fromTeam = row.IsHumanMessage__c == true;
                 item.sender = String.isNotBlank(row.SenderDisplayName__c)
