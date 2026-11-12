@@ -7,6 +7,7 @@
     <template lwc:elseif={hasError}>
         <div class="slds-box slds-box_x-small slds-theme_error slds-text-align_center">
             The conversation for this quote could not be loaded.
+            <lightning-button label="Retry" variant="neutral" onclick={handleRefresh} class="slds-m-left_small"></lightning-button>
         </div>
     </template>
     <template lwc:elseif={noConversation}>

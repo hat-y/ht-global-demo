@@ -3,6 +3,7 @@
     <fullName>PCB_ITAR_Classification__c</fullName>
     <description>ITAR/EAR controlled vs commercial classification from the Instant Quote form.</description>
     <externalId>false</externalId>
+    <inlineHelpText>ITAR (US defense-controlled), EAR (export-controlled) or Commercial. Drives who may handle the files.</inlineHelpText>
     <label>ITAR Classification</label>
     <length>80</length>
     <required>false</required>

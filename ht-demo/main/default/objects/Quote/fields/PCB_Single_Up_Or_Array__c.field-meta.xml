@@ -3,6 +3,7 @@
     <fullName>PCB_Single_Up_Or_Array__c</fullName>
     <description>Single up or array selection from the Instant Quote form.</description>
     <externalId>false</externalId>
+    <inlineHelpText>Single up = one board per panel. Array = several boards delivered as one panel.</inlineHelpText>
     <label>Single Up or Array</label>
     <length>50</length>
     <required>false</required>

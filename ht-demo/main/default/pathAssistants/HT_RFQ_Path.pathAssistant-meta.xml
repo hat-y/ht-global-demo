@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PathAssistant xmlns="http://soap.sforce.com/2006/04/metadata">
+    <active>true</active>
+    <entityName>Quote</entityName>
+    <fieldName>Status</fieldName>
+    <masterLabel>HT RFQ Path</masterLabel>
+    <pathAssistantSteps>
+        <fieldNames>PCB_Board_Type__c</fieldNames>
+        <fieldNames>PCB_Layer_Count__c</fieldNames>
+        <fieldNames>PCB_Quantity__c</fieldNames>
+        <fieldNames>PCB_ITAR_Classification__c</fieldNames>
+        <info>&lt;p&gt;RFQ received. Confirm board type, layer count, quantity and ITAR/EAR classification with the customer. Ask for Gerber files if they are missing.&lt;/p&gt;</info>
+        <picklistValueName>Draft</picklistValueName>
+    </pathAssistantSteps>
+    <pathAssistantSteps>
+        <fieldNames>PCB_Lead_Time_Days__c</fieldNames>
+        <fieldNames>PCB_Board_Width__c</fieldNames>
+        <fieldNames>PCB_Board_Length__c</fieldNames>
+        <info>&lt;p&gt;Technical review. Check the Gerbers and board dimensions, confirm the lead time with production, then price the PCB Fabrication line.&lt;/p&gt;</info>
+        <picklistValueName>In Review</picklistValueName>
+    </pathAssistantSteps>
+    <pathAssistantSteps>
+        <fieldNames>ExpirationDate</fieldNames>
+        <fieldNames>ContactId</fieldNames>
+        <info>&lt;p&gt;Quote sent. Use Send Quote to email it to the contact, set the expiration date and follow up until the customer answers.&lt;/p&gt;</info>
+        <picklistValueName>Presented</picklistValueName>
+    </pathAssistantSteps>
+    <pathAssistantSteps>
+        <info>&lt;p&gt;Closed: the customer accepted. Hand the order over to production.&lt;/p&gt;</info>
+        <picklistValueName>Accepted</picklistValueName>
+    </pathAssistantSteps>
+    <pathAssistantSteps>
+        <info>&lt;p&gt;Closed: the customer declined. Record the reason in the activity timeline.&lt;/p&gt;</info>
+        <picklistValueName>Denied</picklistValueName>
+    </pathAssistantSteps>
+    <recordTypeName>__MASTER__</recordTypeName>
+</PathAssistant>

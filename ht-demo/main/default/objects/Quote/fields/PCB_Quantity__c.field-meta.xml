@@ -2,6 +2,7 @@
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>PCB_Quantity__c</fullName>
     <externalId>false</externalId>
+    <inlineHelpText>Number of boards requested. Also sets the quantity of the PCB Fabrication line item.</inlineHelpText>
     <label>Quantity</label>
     <precision>10</precision>
     <required>false</required>

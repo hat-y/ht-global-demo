@@ -3,6 +3,7 @@
     <fullName>PCB_Conversation_Id__c</fullName>
     <description>Sellium Conversation Id linked to this PCB quote.</description>
     <externalId>false</externalId>
+    <inlineHelpText>System field: Id of the linked Sellium conversation. Do not edit.</inlineHelpText>
     <label>Conversation Id</label>
     <length>18</length>
     <required>false</required>

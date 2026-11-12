@@ -8,4 +8,13 @@
         <skipRecordTypeSelect>false</skipRecordTypeSelect>
         <type>Flexipage</type>
     </actionOverrides>
+    <actionOverrides>
+        <actionName>View</actionName>
+        <comment>Same HT Quote record page on phones</comment>
+        <content>HT_Quote_Record_Page</content>
+        <formFactor>Small</formFactor>
+        <skipRecordTypeSelect>false</skipRecordTypeSelect>
+        <type>Flexipage</type>
+    </actionOverrides>
+    <compactLayoutAssignment>HT_Quote_Compact</compactLayoutAssignment>
 </CustomObject>

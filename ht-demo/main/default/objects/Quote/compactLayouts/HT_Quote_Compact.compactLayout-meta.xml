@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CompactLayout xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>HT_Quote_Compact</fullName>
+    <fields>Name</fields>
+    <fields>Status</fields>
+    <fields>PCB_Quantity__c</fields>
+    <fields>PCB_Layer_Count__c</fields>
+    <fields>PCB_Board_Type__c</fields>
+    <fields>PCB_Lead_Time_Days__c</fields>
+    <fields>PCB_ITAR_Classification__c</fields>
+    <fields>AccountId</fields>
+    <fields>OpportunityId</fields>
+    <label>HT Quote Compact</label>
+</CompactLayout>

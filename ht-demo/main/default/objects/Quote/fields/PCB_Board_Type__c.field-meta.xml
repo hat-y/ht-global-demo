@@ -3,6 +3,7 @@
     <fullName>PCB_Board_Type__c</fullName>
     <description>PCB board type from the Instant Quote form.</description>
     <externalId>false</externalId>
+    <inlineHelpText>Type of board requested, e.g. rigid, flex or rigid-flex.</inlineHelpText>
     <label>Board Type</label>
     <length>100</length>
     <required>false</required>

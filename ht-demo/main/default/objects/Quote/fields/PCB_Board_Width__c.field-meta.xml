@@ -2,6 +2,7 @@
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>PCB_Board_Width__c</fullName>
     <externalId>false</externalId>
+    <inlineHelpText>Board width. Uses the unit in Unit of Measure.</inlineHelpText>
     <label>Board Width</label>
     <precision>10</precision>
     <required>false</required>
