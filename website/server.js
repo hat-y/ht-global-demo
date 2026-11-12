@@ -173,7 +173,8 @@ async function callSalesforceJwt(method, body, query) {
 // ---------------------------------------------------------------------------
 
 const MAX_BODY_BYTES = 16 * 1024;
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+// Default 5 MB per file: the demo org (Developer Edition) has 20 MB of file storage in total.
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const TEN_MIN = 10 * 60 * 1000;
 const GENERIC_ERROR = { success: false, errorMessage: 'Something went wrong. Please try again.' };
 
@@ -465,7 +466,7 @@ async function readUploadBody(req, declared, max, idleMs = 30000) {
     }
     if (step.done) break;
     const chunk = step.value;
-    if (size + chunk.length > max) throw new HttpError(413, 'File too large. The limit is 25 MB per file.');
+    if (size + chunk.length > max) throw new HttpError(413, `File too large. The limit is ${Math.round(max / 1048576)} MB per file.`);
     if (buf) {
       if (size + chunk.length > declared) throw new HttpError(400, 'Request body does not match Content-Length.');
       chunk.copy(buf, size);
@@ -639,7 +640,7 @@ export function createServer({ callSalesforce, uploadFile = uploadFileUnsupporte
         }
         const file = checkFileName(req.headers['x-file-name']);
         const declared = req.headers['content-length'] === undefined ? NaN : Number(req.headers['content-length']);
-        if (Number.isFinite(declared) && declared > cfg.upload.maxBytes) throw new HttpError(413, 'File too large. The limit is 25 MB per file.');
+        if (Number.isFinite(declared) && declared > cfg.upload.maxBytes) throw new HttpError(413, `File too large. The limit is ${Math.round(cfg.upload.maxBytes / 1048576)} MB per file.`);
         if (declared === 0) throw new HttpError(400, 'The file is empty.');
         if (uploadsInFlight >= cfg.upload.maxConcurrent) {
           return fail(res, 429, 'Too many requests. Please try again later.', { 'Retry-After': '10' });

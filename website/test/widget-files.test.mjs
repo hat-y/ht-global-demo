@@ -15,10 +15,10 @@ test('widget: paperclip button in the composer is labelled, a real button, and o
   for (const ext of ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'zip', 'gbr', 'tgz']) assert.ok(js.includes(`'${ext}'`), ext);
 });
 
-test('widget: client-side limits mirror the server (25 MB, 5 files, type allowlist) with English errors', () => {
-  assert.match(js, /MAX_FILE_BYTES = 25 \* 1024 \* 1024/);
+test('widget: client-side limits mirror the server (5 MB, 5 files, type allowlist) with English errors', () => {
+  assert.match(js, /MAX_FILE_BYTES = 5 \* 1024 \* 1024/);
   assert.match(js, /MAX_FILES = 5/);
-  assert.match(js, /The limit is 25 MB per file/);
+  assert.match(js, /The limit is 5 MB per file/);
   assert.match(js, /You can attach up to 5 files at a time/);
   assert.match(js, /isn\\u2019t accepted|isn't accepted/);
 });

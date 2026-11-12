@@ -26,7 +26,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    # 384m: a 25 MB file upload is buffered in memory (about 75 MB at its peak); at most 2 run at once.
+    # 384m: uploads are buffered in memory (5 MB default cap, at most 2 at once); headroom kept if the cap is raised.
     mem_limit: 384m
     logging:
       driver: json-file

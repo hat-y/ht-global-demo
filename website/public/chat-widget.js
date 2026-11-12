@@ -27,7 +27,7 @@
   var FILE_EXT = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'jpg', 'jpeg', 'png', 'zip', 'gbr', 'tgz'];
   var FILE_ACCEPT = FILE_EXT.map(function (e) { return '.' + e; }).join(',');
   var FILE_TYPES_TEXT = 'pdf, doc, docx, xls, xlsx, csv, jpg, png, zip, gbr or tgz';
-  var MAX_FILE_BYTES = 25 * 1024 * 1024;
+  var MAX_FILE_BYTES = 5 * 1024 * 1024; // must match the server's UPLOAD_MAX_BYTES
   var MAX_FILES = 5;
   var RISKY_INNER = ['exe', 'bat', 'cmd', 'com', 'scr', 'pif', 'js', 'jse', 'mjs', 'vbs', 'vbe', 'wsf', 'ps1', 'sh', 'bash', 'jar', 'msi', 'dll', 'hta', 'lnk', 'reg', 'html', 'htm', 'xhtml', 'svg', 'php', 'py', 'pl', 'cgi', 'asp', 'aspx', 'jsp', 'apk', 'app', 'dmg', 'docm', 'xlsm'];
 
@@ -139,7 +139,7 @@
   var composerErr = h('p', { class: 'htcw-err htcw-composer-err', role: 'alert', hidden: true });
   var input = h('textarea', { class: 'htcw-input', rows: '1', maxlength: '4000', placeholder: 'Type your message…', 'aria-label': 'Message to the HT Global assistant' });
   var sendBtn = h('button', { type: 'submit', class: 'htcw-send', 'aria-label': 'Send message' }, svg(ICON_SEND));
-  var clipBtn = h('button', { type: 'button', class: 'htcw-clip', 'aria-label': 'Attach files (' + FILE_TYPES_TEXT + '; up to 25 MB each, 5 at a time)' }, svg(ICON_CLIP));
+  var clipBtn = h('button', { type: 'button', class: 'htcw-clip', 'aria-label': 'Attach files (' + FILE_TYPES_TEXT + '; up to 5 MB each, 5 at a time)' }, svg(ICON_CLIP));
   var fileInput = h('input', { type: 'file', class: 'htcw-fileinput', multiple: true, accept: FILE_ACCEPT, tabindex: '-1', 'aria-hidden': 'true' });
   var fileTray = h('ul', { class: 'htcw-files', 'aria-label': 'Attachments', hidden: true });
   var fileLive = h('p', { class: 'htcw-sr', role: 'status', 'aria-live': 'polite' });
@@ -269,7 +269,7 @@
       return name + ' isn\u2019t accepted. Use ' + FILE_TYPES_TEXT + '.';
     }
     if (f.size === 0) return name + ' is empty.';
-    if (f.size > MAX_FILE_BYTES) return name + ' is ' + fmtSize(f.size) + '. The limit is 25 MB per file.';
+    if (f.size > MAX_FILE_BYTES) return name + ' is ' + fmtSize(f.size) + '. The limit is 5 MB per file.';
     return '';
   }
   // keeps what is acceptable, up to MAX_FILES in total, and says why the rest was left out
@@ -289,7 +289,7 @@
     var helpId = id + '-help';
     var errId = id + '-err';
     var control = h('input', { type: 'file', id: id, multiple: true, accept: FILE_ACCEPT, 'aria-describedby': helpId + ' ' + errId });
-    var help = h('p', { class: 'htcw-help', id: helpId, text: FILE_TYPES_TEXT + ' \u00b7 up to 25 MB each \u00b7 max 5 files' });
+    var help = h('p', { class: 'htcw-help', id: helpId, text: FILE_TYPES_TEXT + ' \u00b7 up to 5 MB each \u00b7 max 5 files' });
     var err = h('p', { class: 'htcw-err', id: errId, role: 'alert', hidden: true });
     var list = h('ul', { class: 'htcw-picked', 'aria-label': 'Files to attach' });
     function renderList() {
@@ -655,7 +655,7 @@
 
   function failureText(file, status, json) {
     var msg = json && typeof json.errorMessage === 'string' ? json.errorMessage : '';
-    if (status === 413) return file.name + ' is too large. The limit is 25 MB per file.';
+    if (status === 413) return file.name + ' is too large. The limit is 5 MB per file.';
     if (status === 415 || status === 400 || status === 429) return msg || (file.name + ' could not be attached.');
     if (status === 404) return 'This quote can\u2019t be found. Start a new quote from the menu.';
     return 'Something went wrong. Please try again.';

@@ -165,20 +165,20 @@ test('Content-Length that lies (smaller than the real body) cannot smuggle more 
   for (const f of s.calls.upload) assert.ok(f.buffer.length <= 100, 'never more than the declared length');
 }));
 
-test('26 MB file against the default limit → 413 and nothing stored; exactly 25 MB is accepted', async () => {
+test('6 MB file against the default limit → 413 and nothing stored; exactly 5 MB is accepted', async () => {
   await withServer(clean, async (s) => {
-    const big = Buffer.alloc(26 * 1024 * 1024);
+    const big = Buffer.alloc(6 * 1024 * 1024);
     MAGIC.pdf().copy(big);
     const res = await upload(s.base, { headers: named('big.pdf'), body: big });
     assert.equal(res.status, 413);
     nothingStored(s);
   });
   await withServer(clean, async (s) => {
-    const edge = Buffer.alloc(25 * 1024 * 1024);
+    const edge = Buffer.alloc(5 * 1024 * 1024);
     MAGIC.pdf().copy(edge);
     const res = await upload(s.base, { headers: named('edge.pdf'), body: edge });
     assert.equal(res.status, 200);
-    assert.equal(s.calls.sf.find((c) => c.method === 'PATCH').body.message, '\u{1F4CE} Attached: edge.pdf (25.0 MB)');
+    assert.equal(s.calls.sf.find((c) => c.method === 'PATCH').body.message, '\u{1F4CE} Attached: edge.pdf (5.0 MB)');
   });
 });
 
