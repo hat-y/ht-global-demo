@@ -1,0 +1,96 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 3540 >>
+stream
+1.5 w 20.0 20.0 802.0 555.0 re S
+1 w 560.0 30.0 262.0 110.0 re S
+BT /F2 13 Tf 570.0 120.0 Td (SKYLINE ROBOTICS) Tj ET
+BT /F1 10 Tf 570.0 102.0 Td (FC-100  Flight controller board) Tj ET
+BT /F1 9 Tf 570.0 86.0 Td (Fabrication drawing  -  Rev A  -  sheet 1/1) Tj ET
+BT /F1 9 Tf 570.0 70.0 Td (Units: mm   Tolerance: +/-0.10 unless noted) Tj ET
+BT /F1 9 Tf 570.0 54.0 Td (Demo file for HT Global Circuits RFQ) Tj ET
+BT /F1 8 Tf 570.0 38.0 Td (Fictional data - for demonstration only) Tj ET
+2 w 70.0 250.0 260.0 208.0 re S
+0.8 w 84.6 260.4 m 84.6 262.7 82.7 264.6 80.4 264.6 c 78.1 264.6 76.2 262.7 76.2 260.4 c 76.2 258.1 78.1 256.2 80.4 256.2 c 82.7 256.2 84.6 258.1 84.6 260.4 c S
+0.8 w 323.8 260.4 m 323.8 262.7 321.9 264.6 319.6 264.6 c 317.3 264.6 315.4 262.7 315.4 260.4 c 315.4 258.1 317.3 256.2 319.6 256.2 c 321.9 256.2 323.8 258.1 323.8 260.4 c S
+0.8 w 84.6 447.6 m 84.6 449.9 82.7 451.8 80.4 451.8 c 78.1 451.8 76.2 449.9 76.2 447.6 c 76.2 445.3 78.1 443.4 80.4 443.4 c 82.7 443.4 84.6 445.3 84.6 447.6 c S
+0.8 w 323.8 447.6 m 323.8 449.9 321.9 451.8 319.6 451.8 c 317.3 451.8 315.4 449.9 315.4 447.6 c 315.4 445.3 317.3 443.4 319.6 443.4 c 321.9 443.4 323.8 445.3 323.8 447.6 c S
+0.8 w 70.0 232.0 m 330.0 232.0 l S
+0.8 w 70.0 238.0 m 70.0 226.0 l S
+0.8 w 330.0 238.0 m 330.0 226.0 l S
+BT /F2 10 Tf 182.0 216.0 Td (100.00) Tj ET
+0.8 w 348.0 250.0 m 348.0 458.0 l S
+0.8 w 342.0 250.0 m 354.0 250.0 l S
+0.8 w 342.0 458.0 m 354.0 458.0 l S
+BT /F2 10 Tf 358.0 354.0 Td (80.00) Tj ET
+BT /F1 9 Tf 70.0 470.0 Td (4x mounting holes 3.20 mm, 4.00 mm from edges, non-plated) Tj ET
+BT /F2 10 Tf 70.0 160.0 Td (Panel: 2 x 2 array, 5.0 mm rails, V-score between boards, 3 fiducials) Tj ET
+BT /F2 12 Tf 410.0 530.0 Td (FABRICATION NOTES) Tj ET
+BT /F1 9.5 Tf 410.0 510.0 Td (1. Material: FR-4, Tg 170, halogen-free.) Tj ET
+BT /F1 9.5 Tf 410.0 495.0 Td (2. Layers: 4. Finished thickness: 1.60 mm +/-10%.) Tj ET
+BT /F1 9.5 Tf 410.0 480.0 Td (3. Copper: 1 oz outer, 1 oz inner, finished.) Tj ET
+BT /F1 9.5 Tf 410.0 465.0 Td (4. Surface finish: ENIG \(Ni 3-6 um, Au 0.05-0.1 um\).) Tj ET
+BT /F1 9.5 Tf 410.0 450.0 Td (5. Solder mask: green LPI, both sides. Silkscreen: white.) Tj ET
+BT /F1 9.5 Tf 410.0 435.0 Td (6. Min trace / space: 0.10 / 0.10 mm. Min drill: 0.25 mm.) Tj ET
+BT /F1 9.5 Tf 410.0 420.0 Td (7. Impedance: 50 ohm single-ended on L1 and L4, +/-10%.) Tj ET
+BT /F1 9.5 Tf 410.0 405.0 Td (8. Quality: IPC-6012 Class 2, 100% electrical test.) Tj ET
+BT /F1 9.5 Tf 410.0 390.0 Td (9. Quantity: 500 boards \(125 panels of 2 x 2\).) Tj ET
+BT /F1 9.5 Tf 410.0 375.0 Td (10. Export classification: Commercial \(not ITAR/EAR\).) Tj ET
+BT /F2 12 Tf 410.0 330.0 Td (STACK-UP \(1.60 mm\)) Tj ET
+0.6 w 410.0 304.0 220.0 16.0 re S
+BT /F1 9 Tf 416.0 308.0 Td (L1  Top) Tj ET
+BT /F1 9 Tf 510.0 308.0 Td (Signal  1 oz) Tj ET
+0.6 w 410.0 288.0 220.0 16.0 re S
+BT /F1 9 Tf 416.0 292.0 Td (Prepreg) Tj ET
+BT /F1 9 Tf 510.0 292.0 Td (0.20 mm) Tj ET
+0.6 w 410.0 272.0 220.0 16.0 re S
+BT /F1 9 Tf 416.0 276.0 Td (L2) Tj ET
+BT /F1 9 Tf 510.0 276.0 Td (GND plane  1 oz) Tj ET
+0.6 w 410.0 256.0 220.0 16.0 re S
+BT /F1 9 Tf 416.0 260.0 Td (Core) Tj ET
+BT /F1 9 Tf 510.0 260.0 Td (1.00 mm) Tj ET
+0.6 w 410.0 240.0 220.0 16.0 re S
+BT /F1 9 Tf 416.0 244.0 Td (L3) Tj ET
+BT /F1 9 Tf 510.0 244.0 Td (PWR plane  1 oz) Tj ET
+0.6 w 410.0 224.0 220.0 16.0 re S
+BT /F1 9 Tf 416.0 228.0 Td (Prepreg) Tj ET
+BT /F1 9 Tf 510.0 228.0 Td (0.20 mm) Tj ET
+0.6 w 410.0 208.0 220.0 16.0 re S
+BT /F1 9 Tf 416.0 212.0 Td (L4  Bottom) Tj ET
+BT /F1 9 Tf 510.0 212.0 Td (Signal  1 oz) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+7 0 obj
+<< /Title (FC-100 fabrication drawing - demo) /Author (Skyline Robotics - fictional) >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000257 00000 n 
+0000003849 00000 n 
+0000003919 00000 n 
+0000003994 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R /Info 7 0 R >>
+startxref
+4097
+%%EOF
