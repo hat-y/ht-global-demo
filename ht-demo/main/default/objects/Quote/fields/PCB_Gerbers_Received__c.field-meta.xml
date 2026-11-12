@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>PCB_Gerbers_Received__c</fullName>
+    <defaultValue>false</defaultValue>
+    <description>Whether the customer has sent Gerber or ODB++ files for this RFQ.</description>
+    <externalId>false</externalId>
+    <inlineHelpText>Check when the customer's Gerber or ODB++ files are attached under Files.</inlineHelpText>
+    <label>Gerbers Received</label>
+    <trackHistory>false</trackHistory>
+    <type>Checkbox</type>
+</CustomField>

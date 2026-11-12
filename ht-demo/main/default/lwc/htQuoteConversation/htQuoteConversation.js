@@ -5,6 +5,8 @@ import getThread from '@salesforce/apex/HtQuoteConversationController.getThread'
 
 export default class HtQuoteConversation extends NavigationMixin(LightningElement) {
     @api recordId;
+    /** Height of the thread box in px; the thread scrolls inside it (to the newest message on load). */
+    @api threadHeight = 640;
     result;
 
     @wire(getThread, { quoteId: '$recordId' })
@@ -30,6 +32,11 @@ export default class HtQuoteConversation extends NavigationMixin(LightningElemen
     get summary() {
         const n = this.data ? this.data.messages.length : 0;
         return n === 1 ? '1 message' : n + ' messages';
+    }
+
+    get frameStyle() {
+        const h = Number(this.threadHeight) > 0 ? Number(this.threadHeight) : 640;
+        return `height: min(${h}px, 80vh); min-height: 360px;`;
     }
 
     handleRefresh() {

@@ -87,19 +87,9 @@ public with sharing class HtPcbQuoteService {
 
             createInboundMessage(conversation.Id, req.message, conversation.DisplayName__c);
 
+            // The chat lives in the conversation; the quote comment keeps only the form comment.
             if (String.isNotBlank(req.quoteId)) {
-                Quote quote = [
-                    SELECT Id, PCB_Customer_Comment__c, Description
-                    FROM Quote
-                    WHERE Id = :req.quoteId
-                    LIMIT 1
-                ];
-                String prior = String.isBlank(quote.PCB_Customer_Comment__c)
-                    ? ''
-                    : quote.PCB_Customer_Comment__c + '\n';
-                quote.PCB_Customer_Comment__c = prior + req.message;
-                update quote;
-                res.quoteId = quote.Id;
+                res.quoteId = req.quoteId;
             }
 
             res.success = true;

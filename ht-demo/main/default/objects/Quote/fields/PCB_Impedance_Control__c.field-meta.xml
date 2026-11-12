@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>PCB_Impedance_Control__c</fullName>
+    <description>Impedance control requirement, free text.</description>
+    <externalId>false</externalId>
+    <inlineHelpText>Impedance requirement in words, for example 50 ohm single-ended. Leave blank if none.</inlineHelpText>
+    <label>Impedance Control</label>
+    <length>80</length>
+    <required>false</required>
+    <trackHistory>false</trackHistory>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>

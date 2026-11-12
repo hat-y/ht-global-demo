@@ -12,6 +12,7 @@
             <objects>
                 <object>Quote</object>
             </objects>
+            <property name="threadHeight" type="Integer" default="640" min="360" max="1200" label="Thread height (px)" description="Height of the scrolling thread box."/>
         </targetConfig>
     </targetConfigs>
 </LightningComponentBundle>

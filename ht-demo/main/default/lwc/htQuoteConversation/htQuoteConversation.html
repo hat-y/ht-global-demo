@@ -17,13 +17,15 @@
         </div>
     </template>
     <template lwc:else>
-        <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-p-bottom_x-small">
-            <span class="slds-text-color_weak slds-text-body_small">{summary} (customer-visible)</span>
+        <div class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-p-bottom_x-small slds-wrap">
+            <span class="slds-text-heading_small"><b>{summary}</b> <span class="slds-text-color_weak slds-text-body_small">(customer-visible)</span></span>
             <span>
                 <lightning-button-icon icon-name="utility:refresh" alternative-text="Refresh" variant="border-filled" size="small" onclick={handleRefresh} class="slds-m-right_x-small"></lightning-button-icon>
                 <lightning-button label="Open in Sellium Console" icon-name="utility:new_window" onclick={openConsole}></lightning-button>
             </span>
         </div>
-        <c-conversation-thread conversation-id={conversationId}></c-conversation-thread>
+        <div class="thread-frame" style={frameStyle}>
+            <c-conversation-thread conversation-id={conversationId}></c-conversation-thread>
+        </div>
     </template>
 </template>

@@ -51,7 +51,7 @@ private class HtPcbQuoteServiceTest {
     }
 
     @IsTest
-    static void appendMessage_updatesConversationAndQuoteComment() {
+    static void appendMessage_addsConversationMessageAndKeepsFormComment() {
         HtPcbQuoteService.QuoteRequest startReq = new HtPcbQuoteService.QuoteRequest();
         startReq.name = 'Jordan Lee';
         startReq.company = 'Beacon Boards';
@@ -59,6 +59,7 @@ private class HtPcbQuoteServiceTest {
         startReq.boardType = 'Flex PCB';
         startReq.quantity = 10;
         startReq.itarClassification = 'Commercial';
+        startReq.comment = 'Prototype run first';
         HtPcbQuoteResult started = HtPcbQuoteService.startQuote(startReq);
         System.assertEquals(true, started.success, started.errorMessage == null ? 'ok' : started.errorMessage);
 
@@ -76,11 +77,9 @@ private class HtPcbQuoteServiceTest {
             2,
             [SELECT COUNT() FROM ConversationMessage__c WHERE Conversation__c = :started.conversationId]
         );
+        System.assertEquals(started.quoteId, appended.quoteId);
         Quote quote = [SELECT PCB_Customer_Comment__c FROM Quote WHERE Id = :started.quoteId];
-        System.assert(
-            quote.PCB_Customer_Comment__c != null &&
-            quote.PCB_Customer_Comment__c.contains('0.5mm pitch BGA')
-        );
+        System.assertEquals('Prototype run first', quote.PCB_Customer_Comment__c);
     }
 
     private static HtPcbQuoteResult startForPolling(String email) {

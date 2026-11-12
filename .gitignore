@@ -56,3 +56,6 @@ manifest/
 
 # Local ODD task log, not published
 odd/
+
+# Design canvas work (real-UI screenshots, internal notes); kept local
+design/

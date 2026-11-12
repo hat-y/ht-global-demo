@@ -1,0 +1,35 @@
+<template>
+    <lightning-card title="Customer" icon-name="standard:contact">
+        <div class="slds-p-horizontal_medium slds-p-bottom_small">
+            <template lwc:if={hasContact}>
+                <div class="slds-grid slds-grid_vertical-align-center slds-m-bottom_small">
+                    <lightning-avatar initials={initials} fallback-icon-name="standard:contact" size="medium" class="slds-m-right_small"></lightning-avatar>
+                    <div class="slds-col slds-has-flexi-truncate">
+                        <a href="#" onclick={openContact} class="slds-text-heading_small slds-truncate slds-show"><b>{name}</b></a>
+                        <p class="slds-text-color_weak slds-truncate" title={subtitle}>{subtitle}</p>
+                    </div>
+                </div>
+                <dl class="slds-list_stacked">
+                    <dt class="slds-text-title">Email</dt>
+                    <dd class="slds-m-bottom_x-small slds-truncate"><a href={emailHref} title={email}>{email}</a></dd>
+                    <dt class="slds-text-title">Phone</dt>
+                    <dd class="slds-m-bottom_x-small"><a href={phoneHref}>{phone}</a></dd>
+                    <template lwc:if={accountId}>
+                        <dt class="slds-text-title">Account</dt>
+                        <dd class="slds-m-bottom_x-small slds-truncate"><a href="#" onclick={openAccount}>{accountName}</a></dd>
+                    </template>
+                    <template lwc:if={opportunityId}>
+                        <dt class="slds-text-title">Opportunity</dt>
+                        <dd class="slds-truncate"><a href="#" onclick={openOpportunity}>{opportunityName}</a></dd>
+                    </template>
+                </dl>
+            </template>
+            <template lwc:elseif={loaded}>
+                <p class="slds-text-color_weak">No contact on this quote yet.</p>
+            </template>
+            <template lwc:else>
+                <lightning-spinner alternative-text="Loading customer" size="small"></lightning-spinner>
+            </template>
+        </div>
+    </lightning-card>
+</template>
