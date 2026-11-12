@@ -332,6 +332,16 @@
         <field>ConversationLink__c.LinkType__c</field>
         <readable>true</readable>
     </fieldPermissions>
+    <fieldPermissions>
+        <editable>false</editable>
+        <field>ConversationEvent__c.EventDateTime__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>false</editable>
+        <field>ConversationEvent__c.RelatedMessage__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
     <objectPermissions>
         <allowCreate>true</allowCreate>
         <allowDelete>false</allowDelete>
