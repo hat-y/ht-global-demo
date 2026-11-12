@@ -17,12 +17,12 @@ test('widget intake: the 3-step form flow is gone', () => {
 test('widget intake: first open posts /api/intake with message null; later turns send history, fields and the message', () => {
   assert.match(js, /requestIntake\(null, \[\]\)/);
   assert.match(js, /fetch\('\/api\/intake'/);
-  assert.match(js, /body: JSON\.stringify\(\{ history: serverHistory\(prior\), fields: S\.fields, message: message, website: honeypotValue\(\) \}\)/);
+  assert.match(js, /body: JSON\.stringify\(\{ history: serverHistory\(prior\), fields: S\.fields, deferred: S\.deferred, message: message, website: honeypotValue\(\) \}\)/);
   assert.match(js, /SEND_HISTORY = 30/);
 });
 
 test('widget intake: quick replies are buttons in a labelled group, a click sends the chip value, older chips are disabled', () => {
-  assert.match(js, /class: 'htcw-qr', role: 'group', 'aria-label': 'Quick replies'/);
+  assert.match(js, /class: 'htcw-qr' \+ \(cards \? ' htcw-qr-cards' : ''\), role: 'group', 'aria-label': 'Quick replies'/);
   assert.match(js, /type: 'button', class: 'htcw-qr-btn'/);
   assert.match(js, /sendCustomer\(c\.value\)/);
   assert.match(js, /function disableChips/);
@@ -42,7 +42,7 @@ test('widget intake: progress hint "N of 12 details"', () => {
 });
 
 test('widget summary: the card appears when complete, lists Contact / Board / Delivery & compliance and the optional notes, with Confirm and Change something', () => {
-  assert.match(js, /if \(S\.complete\) renderSummary\(true\)/);
+  assert.match(js, /if \(inReview\(\)\) renderSummary\(true\)/);
   assert.match(js, /Here\\u2019s what I have/);
   for (const t of ["title: 'Contact'", "title: 'Board'", "title: 'Delivery & compliance'"]) assert.ok(js.includes(t), t);
   assert.match(js, /text: 'Confirm'/);
@@ -97,4 +97,27 @@ test('widget: the data-driven UI uses textContent only (assistant and customer t
 
 test('widget summary css exists', () => {
   for (const cls of ['htcw-sum-title', 'htcw-sum-row', 'htcw-sum-group', 'htcw-muted']) assert.ok(css.includes(cls), cls);
+});
+
+test('widget S24: quick replies with a description render as option cards (2 columns, 1 under 420 px), chips stay as they are', () => {
+  for (const c of ['htcw-qr-card', 'htcw-qr-title', 'htcw-qr-desc']) assert.ok(js.includes(c) && css.includes(c), c);
+  assert.match(css, /\.htcw-qr-cards\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(css, /@media \(max-width:419px\)\{#htcw \.htcw-qr-cards\{grid-template-columns:minmax\(0,1fr\)\}\}/);
+  assert.match(css, /\.htcw-qr-card:focus-visible\{outline:3px solid/);
+  assert.match(js, /type: 'button', class: 'htcw-qr-btn', text: c\.label/);
+  assert.match(js, /c\.description\.length <= 60/);
+});
+
+test('widget S24: deferred is persisted, sent and read back; the summary waits for missing required fields', () => {
+  assert.match(js, /deferred: \[\]/);
+  assert.match(js, /S\.deferred = Array\.isArray\(result\.deferred\)/);
+  assert.match(js, /function missingRow/);
+  assert.match(js, /text: 'Missing'/);
+  assert.match(js, /confirmBtn\.disabled = requiredMissing\(\)\.length > 0/);
+  assert.ok(css.includes('.htcw-missing-tag') && css.includes('.htcw-sum-missing'));
+});
+
+test('widget S24: old cards are disabled after a choice, like chips', () => {
+  assert.match(js, /querySelectorAll\('\.htcw-qr-btn'\)[\s\S]{0,60}b\.disabled = true/);
+  assert.ok(css.includes('.htcw-qr-card:disabled'));
 });

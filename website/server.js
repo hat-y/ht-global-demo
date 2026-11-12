@@ -406,8 +406,15 @@ function normalizeIntakeFields(raw) {
   }
   return out;
 }
-function missingFields(fields) {
-  return REQUIRED_ORDER.filter((k) => fields[k] === undefined);
+// Missing required fields in form order; deferred ones (the customer will give them later) go last.
+function missingFields(fields, deferred = []) {
+  const miss = REQUIRED_ORDER.filter((k) => fields[k] === undefined);
+  return miss.filter((k) => !deferred.includes(k)).concat(miss.filter((k) => deferred.includes(k)));
+}
+// Keeps only valid, still-missing required names, deduplicated, in form order.
+function cleanDeferred(raw, fields) {
+  if (!Array.isArray(raw)) return [];
+  return REQUIRED_ORDER.filter((k) => raw.includes(k) && fields[k] === undefined);
 }
 
 function validateTranscript(raw) {
@@ -470,13 +477,25 @@ const FALLBACK_PROMPTS = {
 };
 const FALLBACK_GREETING = 'Hi! I\u2019m the HT Global quote assistant. I\u2019ll ask a few quick questions to get your quote started. ';
 const FALLBACK_COMPLETE = 'I have everything I need. Please check the summary below and confirm when it looks right.';
-const fallbackQuickReplies = (name) => (ENUMS[name] || []).map((v) => ({ label: v, value: v }));
+const OPTION_HINTS = {
+  'Rigid PCB': 'Standard FR-4, the most common choice',
+  'Flex PCB': 'Bends to fit tight or moving spaces',
+  'Rigid-Flex PCB': 'Rigid and flexible sections in one board',
+  'HDI PCB': 'Microvias and very fine lines for dense designs',
+  'Metal Core PCB': 'Metal base that dissipates heat (LEDs, power)',
+  'High Frequency PCB': 'Low-loss materials for RF and microwave',
+  'Single Up': 'Individual loose boards',
+  Array: 'Several boards joined in a panel for assembly',
+  Commercial: 'No export restrictions',
+  'ITAR/EAR': 'US export-controlled design'
+};
+const fallbackQuickReplies = (name) => (ENUMS[name] || []).map((v) => (OPTION_HINTS[v] ? { label: v, value: v, description: OPTION_HINTS[v] } : { label: v, value: v }));
 
 // Deterministic reply used when the AI agent is unavailable: never a dead end. If the last assistant
 // turn was this fallback's own question, the customer's answer is parsed for that field.
-function intakeFallback({ history, fields, message }) {
+function intakeFallback({ history, fields, message, deferred = [] }) {
   const merged = { ...fields };
-  const target = missingFields(merged)[0];
+  const target = missingFields(merged, deferred)[0];
   let prefix = '';
   if (target) {
     const lastAssistant = [...history].reverse().find((t) => t.role === 'assistant');
@@ -491,9 +510,9 @@ function intakeFallback({ history, fields, message }) {
       prefix = FALLBACK_GREETING;
     }
   }
-  const next = missingFields(merged)[0];
-  if (!next) return { reply: FALLBACK_COMPLETE, quickReplies: [], fieldUpdates: merged };
-  return { reply: prefix + FALLBACK_PROMPTS[next], quickReplies: fallbackQuickReplies(next), fieldUpdates: merged };
+  const next = missingFields(merged, deferred)[0];
+  if (!next) return { reply: FALLBACK_COMPLETE, quickReplies: [], fieldUpdates: merged, asking: null };
+  return { reply: prefix + FALLBACK_PROMPTS[next], quickReplies: fallbackQuickReplies(next), fieldUpdates: merged, asking: next };
 }
 
 const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
@@ -506,7 +525,8 @@ function cleanQuickReplies(raw) {
   for (const item of raw) {
     const label = cleanText(typeof item === 'string' ? item : item && item.label, 40);
     const value = cleanText(typeof item === 'string' ? item : item && (item.value ?? item.label), 200) || label;
-    if (label && value && !out.some((q) => q.label === label)) out.push({ label, value });
+    const description = item && typeof item === 'object' ? cleanText(item.description, 61) : '';
+    if (label && value && !out.some((q) => q.label === label)) out.push(description && description.length <= 60 ? { label, value, description } : { label, value });
     if (out.length >= 7) break;
   }
   return out;
@@ -538,7 +558,12 @@ function validateIntake(body) {
     if (unknown.length) throw new HttpError(400, `Unknown field: ${unknown[0].slice(0, 40)}.`);
     fields = normalizeIntakeFields(body.fields);
   }
-  return { history, fields, message };
+  let deferred = [];
+  if (body.deferred != null) {
+    if (!Array.isArray(body.deferred) || body.deferred.length > 12 || body.deferred.some((d) => typeof d !== 'string')) throw new HttpError(400, 'deferred must be an array of at most 12 field names.');
+    deferred = cleanDeferred(body.deferred, fields);
+  }
+  return { history, fields, message, deferred };
 }
 
 // Default n8n call: POST N8N_INTAKE_WEBHOOK_URL (synchronous answer), 15 s timeout.
@@ -858,12 +883,12 @@ export function createServer({ callSalesforce, callIntake = callIntakeWebhook, u
         if (limited(req, res, 'intake')) return;
         const body = await readJsonBody(req, MAX_TRANSCRIPT_BODY_BYTES);
         if (typeof body.website === 'string' ? body.website.trim() !== '' : body.website != null && body.website !== false) {
-          return send(res, 200, { success: true, reply: '', quickReplies: [], fields: {}, missing: REQUIRED_ORDER.slice(), complete: false }); // honeypot
+          return send(res, 200, { success: true, reply: '', quickReplies: [], fields: {}, missing: REQUIRED_ORDER.slice(), deferred: [], asking: null, complete: false }); // honeypot
         }
         const input = validateIntake(body);
         let answer = null;
         try {
-          answer = await callIntake({ history: input.history, fields: input.fields, message: input.message });
+          answer = await callIntake({ history: input.history, fields: input.fields, message: input.message, ...(input.deferred.length ? { deferred: input.deferred } : {}) });
           if (!answer || typeof answer !== 'object' || !cleanText(answer.reply, 1500)) throw new Error('intake answer without a reply');
         } catch (error) {
           emit({ level: 'warn', msg: 'intake_fallback', detail: String((error && error.message) || error).slice(0, 300) });
@@ -871,13 +896,16 @@ export function createServer({ callSalesforce, callIntake = callIntakeWebhook, u
         }
         // never trust the agent: fieldUpdates go through the same rules as POST /api/quote; missing/complete are computed here
         const fields = { ...input.fields, ...normalizeIntakeFields(answer.fieldUpdates) };
-        const missing = missingFields(fields);
+        const deferred = cleanDeferred([...input.deferred, ...(Array.isArray(answer.deferred) ? answer.deferred : [])], fields);
+        const missing = missingFields(fields, deferred);
         return send(res, 200, {
           success: true,
           reply: cleanText(answer.reply, 1500),
           quickReplies: cleanQuickReplies(answer.quickReplies),
           fields,
           missing,
+          deferred: missing.length ? deferred : [],
+          asking: FIELD_NAMES.includes(answer.asking) ? answer.asking : null,
           complete: missing.length === 0
         }, { 'Cache-Control': 'no-store' });
       }

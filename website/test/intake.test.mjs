@@ -284,3 +284,85 @@ test('POST /api/quote without a transcript sends none, and a plain body is still
   const res = await json(s.base, 'POST', '/api/quote', JSON.stringify({ ...validQuote, comment: 'x'.repeat(16 * 1024) }));
   assert.equal(res.status, 413);
 }));
+
+// ---- S24: deferred required fields and option descriptions ----
+test('intake: deferred is accepted, forwarded to n8n, echoed (only still-missing names) and moved to the end of missing', () => withServer({
+  intakeImpl: async () => ({ reply: 'ok', quickReplies: [], fieldUpdates: { phone: '+1 555 0100' } })
+}, async (s) => {
+  const body = { history: [], fields: { name: 'Facundo', company: 'Acme' }, deferred: ['email', 'phone', 'name', 'bogus'], message: 'later' };
+  const j = await (await json(s.base, 'POST', '/api/intake', body)).json();
+  assert.deepEqual(j.deferred, ['email']); // phone got filled, name already present, bogus unknown
+  assert.deepEqual(j.missing, ORDER.filter((k) => !['name', 'company', 'phone', 'email'].includes(k)).concat(['email']));
+  assert.equal(j.complete, false);
+  assert.deepEqual(s.calls.intake[0].deferred, ['email', 'phone']);
+}));
+
+test('intake: n8n may add to deferred; names are validated and deduplicated', () => withServer({
+  intakeImpl: async () => ({ reply: 'No worries', quickReplies: [], fieldUpdates: {}, deferred: ['email', 'email', 'nope', 7] })
+}, async (s) => {
+  const j = await (await json(s.base, 'POST', '/api/intake', { history: [], fields: { name: 'A' }, message: 'x' })).json();
+  assert.deepEqual(j.deferred, ['email']);
+  assert.equal(j.missing[j.missing.length - 1], 'email');
+  assert.equal(j.missing[0], 'company');
+}));
+
+test('intake: no deferred → [] in the response and the payload to n8n is unchanged', () => withServer({}, async (s) => {
+  const j = await (await json(s.base, 'POST', '/api/intake', { history: [], fields: {}, message: null })).json();
+  assert.deepEqual(j.deferred, []);
+  assert.deepEqual(j.missing, ORDER);
+  assert.equal('deferred' in s.calls.intake[0], false);
+}));
+
+test('intake: deferred must be an array of at most 12 strings → 400 and n8n not called', () => withServer({}, async (s) => {
+  for (const bad of ['email', { a: 1 }, new Array(13).fill('email'), [1]]) {
+    const res = await json(s.base, 'POST', '/api/intake', { history: [], fields: {}, deferred: bad, message: 'x' });
+    assert.equal(res.status, 400, JSON.stringify(bad));
+  }
+  assert.equal(s.calls.intake.length, 0);
+}));
+
+test('intake: complete ignores deferred (all required present)', () => withServer({}, async (s) => {
+  const j = await (await json(s.base, 'POST', '/api/intake', { history: [], fields: FULL, deferred: ['email'], message: 'x' })).json();
+  assert.equal(j.complete, true);
+  assert.deepEqual(j.missing, []);
+  assert.deepEqual(j.deferred, []);
+}));
+
+test('intake: quick reply description is kept (sanitized, ≤ 60) and dropped when invalid or too long', () => withServer({
+  intakeImpl: async () => ({ reply: 'Pick', quickReplies: [
+    { label: 'Rigid PCB', value: 'Rigid PCB', description: 'Standard FR-4,\u0007 the most common choice' },
+    { label: 'Flex PCB', value: 'Flex PCB', description: 'x'.repeat(61) },
+    { label: 'HDI PCB', value: 'HDI PCB', description: 42 },
+    { label: 'Array', value: 'Array', description: '   ' },
+    { label: 'Other', value: 'Other' }
+  ], fieldUpdates: {} })
+}, async (s) => {
+  const j = await (await json(s.base, 'POST', '/api/intake', { history: [], fields: {}, message: 'x' })).json();
+  assert.deepEqual(j.quickReplies, [
+    { label: 'Rigid PCB', value: 'Rigid PCB', description: 'Standard FR-4, the most common choice' },
+    { label: 'Flex PCB', value: 'Flex PCB' },
+    { label: 'HDI PCB', value: 'HDI PCB' },
+    { label: 'Array', value: 'Array' },
+    { label: 'Other', value: 'Other' }
+  ]);
+}));
+
+test('intake fallback respects deferred: asks the next field, then the deferred one last', () => withServer({
+  intakeImpl: async () => { throw new Error('down'); }
+}, async (s) => {
+  let j = await (await json(s.base, 'POST', '/api/intake', { history: [], fields: { name: 'A', company: 'B' }, deferred: ['email'], message: null })).json();
+  assert.match(j.reply, /phone number/);
+  assert.deepEqual(j.deferred, ['email']);
+  assert.equal(j.missing[j.missing.length - 1], 'email');
+  const rest = { ...FULL }; delete rest.email;
+  j = await (await json(s.base, 'POST', '/api/intake', { history: [], fields: rest, deferred: ['email'], message: null })).json();
+  assert.match(j.reply, /email/i);
+  assert.deepEqual(j.missing, ['email']);
+}));
+
+test('intake: asking is passed through when it is a field name, null otherwise', () => withServer({
+  intakeImpl: async (p) => ({ reply: 'ok', fieldUpdates: {}, asking: p.message === 'a' ? 'email' : 'bogus' })
+}, async (s) => {
+  assert.equal((await (await json(s.base, 'POST', '/api/intake', { history: [], fields: {}, message: 'a' })).json()).asking, 'email');
+  assert.equal((await (await json(s.base, 'POST', '/api/intake', { history: [], fields: {}, message: 'b' })).json()).asking, null);
+}));

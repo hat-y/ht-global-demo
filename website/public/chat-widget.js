@@ -51,6 +51,9 @@
       history: [], // intake turns: { role: 'assistant'|'customer', text, chips?: [{label,value}], note?: true }
       fields: {}, // validated by the server on every turn
       missing: [],
+      deferred: [], // required fields the customer will give later: asked again once, at the end
+      reasked: false, // the deferred field was asked again already
+      review: false, // show the summary although a deferred field is still missing
       complete: false,
       editing: false, // summary card in edit mode
       editDraft: null,
@@ -74,6 +77,7 @@
           if (st.phase !== 'chat') st.phase = 'intake'; // sessions of the old form flow start the intake
           if (!Array.isArray(st.history)) st.history = [];
           if (!st.fields || typeof st.fields !== 'object') st.fields = {};
+          if (!Array.isArray(st.deferred)) st.deferred = [];
           return st;
         }
       }
@@ -204,10 +208,16 @@
     subEl.textContent = S.phase === 'intake' && done > 0 ? done + ' of ' + REQUIRED_COUNT + ' details' : SUB_DEFAULT;
   }
 
+  // review = the summary card is due: everything is in, or only postponed fields are missing and they were asked once
+  function inReview() { return !!(S.complete || S.review); }
   function chipRow(entry, enabled) {
-    var group = h('div', { class: 'htcw-qr', role: 'group', 'aria-label': 'Quick replies' });
+    var cards = entry.chips.some(function (c) { return c.description; });
+    var group = h('div', { class: 'htcw-qr' + (cards ? ' htcw-qr-cards' : ''), role: 'group', 'aria-label': 'Quick replies' });
     entry.chips.forEach(function (c) {
-      var b = h('button', { type: 'button', class: 'htcw-qr-btn', text: c.label, disabled: !enabled });
+      var b = c.description
+        ? h('button', { type: 'button', class: 'htcw-qr-btn htcw-qr-card', disabled: !enabled },
+          h('span', { class: 'htcw-qr-title', text: c.label }), h('span', { class: 'htcw-qr-desc', text: c.description }))
+        : h('button', { type: 'button', class: 'htcw-qr-btn', text: c.label, disabled: !enabled });
       b.addEventListener('click', function () { sendCustomer(c.value); });
       group.appendChild(b);
     });
@@ -230,8 +240,8 @@
     composer.hidden = false;
     input.placeholder = 'Type your answer…';
     var last = S.history.length - 1;
-    S.history.forEach(function (e, i) { appendHistory(e, i === last && !S.complete); });
-    if (S.complete && last >= 0 && S.history[last].role === 'assistant') renderSummary(false);
+    S.history.forEach(function (e, i) { appendHistory(e, i === last && !inReview()); });
+    if (inReview() && last >= 0 && S.history[last].role === 'assistant') renderSummary(false);
     heldTray();
     updateProgress();
     scrollDown();
@@ -261,7 +271,7 @@
     try {
       var res = await fetch('/api/intake', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ history: serverHistory(prior), fields: S.fields, message: message, website: honeypotValue() })
+        body: JSON.stringify({ history: serverHistory(prior), fields: S.fields, deferred: S.deferred, message: message, website: honeypotValue() })
       });
       var result = await res.json();
       if (!res.ok || !result.success) throw new Error(result.errorMessage || 'The assistant could not answer');
@@ -271,13 +281,26 @@
       S.fields = result.fields || {};
       S.missing = Array.isArray(result.missing) ? result.missing : [];
       S.complete = !!result.complete;
-      var chips = (Array.isArray(result.quickReplies) ? result.quickReplies : []).slice(0, 7).filter(function (c) { return c && c.label && c.value; });
+      var prevDeferred = S.deferred || [];
+      S.deferred = Array.isArray(result.deferred) ? result.deferred.filter(function (n) { return S.missing.indexOf(n) >= 0; }) : [];
+      var onlyDeferred = S.missing.length > 0 && S.missing.every(function (n) { return S.deferred.indexOf(n) >= 0; });
+      var grew = S.deferred.some(function (n) { return prevDeferred.indexOf(n) < 0; });
+      S.review = false;
+      // the summary is due when only postponed fields are left and they were asked once (or postponed again, or the assistant wrapped up)
+      if (onlyDeferred) {
+        var asking = result.asking || '';
+        var askedDeferred = S.deferred.indexOf(asking) >= 0;
+        if (S.reasked || grew || !asking) S.review = true;
+        else if (askedDeferred) S.reasked = true;
+      }
+      var chips = (Array.isArray(result.quickReplies) ? result.quickReplies : []).slice(0, 7).filter(function (c) { return c && c.label && c.value; })
+        .map(function (c) { return typeof c.description === 'string' && c.description.trim() && c.description.length <= 60 ? { label: c.label, value: c.value, description: c.description.trim() } : { label: c.label, value: c.value }; });
       var entry = { role: 'assistant', text: String(result.reply || ''), chips: chips };
       S.history.push(entry);
       disableChips();
       typing.hidden = true;
-      appendHistory(entry, !S.complete);
-      if (S.complete) renderSummary(true);
+      appendHistory(entry, !inReview());
+      if (inReview()) renderSummary(true);
       updateProgress();
       save();
     } catch (err) {
@@ -325,7 +348,7 @@
     }
     var prior = S.history.slice();
     removeSummary();
-    S.editing = false; S.editDraft = null;
+    S.editing = false; S.editDraft = null; S.review = false;
     disableChips();
     var entry = { role: 'customer', text: text };
     S.history.push(entry);
@@ -516,6 +539,47 @@
     return card;
   }
 
+  var REQUIRED_NAMES = ['name', 'company', 'email', 'phone', 'boardType', 'singleUpOrArray', 'unitOfMeasure', 'width', 'length', 'layers', 'quantity', 'itarClassification'];
+  function requiredMissing() { return REQUIRED_NAMES.filter(function (n) { return fieldProblem(n, S.fields[n]); }); }
+  // A required field that is still missing: "Missing" plus an inline input; a valid value is stored at once and unlocks Confirm.
+  function missingRow(name) {
+    var id = 'htcw-m-' + name + '-' + (++uid);
+    var errId = id + '-err';
+    var control;
+    var choices = CHIP_VALUES[name];
+    if (choices) {
+      control = h('select', { id: id, name: name, 'aria-required': 'true' }, h('option', { value: '', text: 'Choose\u2026' }));
+      choices.forEach(function (v) { control.appendChild(h('option', { value: v[0], text: v[1] })); });
+    } else {
+      control = h('input', {
+        id: id, name: name, type: name === 'email' ? 'email' : (name === 'phone' ? 'tel' : (NUMERIC[name] ? 'number' : 'text')), 'aria-required': 'true',
+        autocomplete: name === 'email' ? 'email' : (name === 'phone' ? 'tel' : (name === 'name' ? 'name' : (name === 'company' ? 'organization' : null))),
+        inputmode: name === 'email' ? 'email' : (name === 'phone' ? 'tel' : (NUMERIC[name] ? 'decimal' : null)),
+        placeholder: name === 'email' ? 'name@company.com' : (name === 'phone' ? '+1 555 0100' : null), min: NUMERIC[name] ? '0' : null, step: NUMERIC[name] ? 'any' : null
+      });
+    }
+    var err = h('p', { class: 'htcw-err', id: errId, hidden: true });
+    var row = h('div', { class: 'htcw-sum-row htcw-sum-missing' },
+      h('dt', {}, h('label', { for: id, text: LABELS[name] })),
+      h('dd', {}, h('span', { class: 'htcw-missing-tag', text: 'Missing' }), control, err));
+    function sync() {
+      var raw = control.value;
+      var problem = fieldProblem(name, raw);
+      var v = parseValue(name, raw);
+      if (!problem && v !== undefined) S.fields[name] = v; else delete S.fields[name];
+      save();
+      if (!problem) { err.hidden = true; control.removeAttribute('aria-invalid'); control.removeAttribute('aria-describedby'); }
+      row.dispatchEvent(new CustomEvent('htcw-fill', { bubbles: true }));
+    }
+    control.addEventListener('input', sync);
+    control.addEventListener('change', sync);
+    control.addEventListener('blur', function () {
+      var problem = control.value.trim() ? fieldProblem(name, control.value) : '';
+      if (problem) { err.textContent = problem; err.hidden = false; control.setAttribute('aria-invalid', 'true'); control.setAttribute('aria-describedby', errId); }
+    });
+    return row;
+  }
+
   function buildViewCard() {
     var status = h('p', { class: 'htcw-err htcw-card-err', role: 'alert', hidden: true });
     var card = h('form', { class: 'htcw-card htcw-sum', novalidate: true, 'aria-label': 'Your quote request summary' },
@@ -524,6 +588,7 @@
       var dl = h('dl', { class: 'htcw-sum-list' });
       g.names.forEach(function (n) {
         var val = showValue(n);
+        if (!val && REQUIRED_NAMES.indexOf(n) >= 0) { dl.appendChild(missingRow(n)); return; }
         dl.appendChild(h('div', { class: 'htcw-sum-row' }, h('dt', { text: LABELS[n] }), h('dd', { class: val ? '' : 'htcw-muted', text: val || 'Not provided' })));
       });
       card.appendChild(h('section', { class: 'htcw-sum-group', 'aria-label': g.title }, h('h4', { text: g.title }), dl));
@@ -534,6 +599,8 @@
       h('dd', { class: heldFiles.length ? '' : 'htcw-muted', text: heldFiles.length ? heldFiles.map(function (f) { return f.name; }).join(', ') : 'None yet. Use the paperclip to add drawings or Gerbers.' })));
     card.appendChild(h('section', { class: 'htcw-sum-group', 'aria-label': 'Notes and files' }, extra));
     var confirmBtn = h('button', { type: 'submit', class: 'htcw-btn htcw-primary', text: 'Confirm' });
+    confirmBtn.disabled = requiredMissing().length > 0; // the client rule mirrors the server: Confirm waits for every required field
+    card.addEventListener('htcw-fill', function () { confirmBtn.disabled = requiredMissing().length > 0; });
     var changeBtn = h('button', { type: 'button', class: 'htcw-btn htcw-ghost', 'data-change': '', text: 'Change something' });
     card.appendChild(status);
     card.appendChild(h('div', { class: 'htcw-actions' }, changeBtn, confirmBtn));
@@ -712,7 +779,7 @@
     });
     var first = firstName();
     S.thread.push({ who: 'agent', sender: ASSISTANT, text: 'Thanks' + (first ? ', ' + first : '') + '. Your quote request is open with HT Global. I\u2019ll reply here, and our team can join in too.' });
-    S.history = []; S.complete = false; S.missing = []; S.editing = false; S.editDraft = null;
+    S.history = []; S.complete = false; S.missing = []; S.deferred = []; S.reasked = false; S.review = false; S.editing = false; S.editDraft = null;
     S.pendingSince = Date.now();
     save();
     summaryEl = null;

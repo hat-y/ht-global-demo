@@ -111,6 +111,20 @@
 #htcw .htcw-qr-btn:hover:not(:disabled){background:var(--htcw-blue);color:#fff}
 #htcw .htcw-qr-btn:focus-visible{outline:2px solid var(--htcw-blue);outline-offset:2px}
 #htcw .htcw-qr-btn:disabled{background:var(--htcw-bg);color:#5a7686;border-color:var(--htcw-line);cursor:default}
+/* option cards: a quick reply with a one-line explanation */
+#htcw .htcw-qr-cards{align-self:stretch;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}
+#htcw .htcw-qr-card{
+  display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;min-width:0;min-height:62px;white-space:normal;overflow-wrap:anywhere;padding:10px 12px;text-align:left;
+  background:#fff;color:var(--htcw-ink);border:1px solid var(--htcw-line);border-left:3px solid var(--htcw-blue);border-radius:2px;
+}
+#htcw .htcw-qr-card:last-child:nth-child(odd){grid-column:1/-1}
+#htcw .htcw-qr-title{font:700 13px/1.25 Montserrat,Arial,sans-serif;color:var(--htcw-blue)}
+#htcw .htcw-qr-desc{font:400 11.5px/1.35 Poppins,Arial,sans-serif;color:#4f6b7a}
+#htcw .htcw-qr-card:hover:not(:disabled){background:var(--htcw-bg);border-color:var(--htcw-blue);color:var(--htcw-ink);box-shadow:inset 0 -3px 0 var(--htcw-yellow)}
+#htcw .htcw-qr-card:focus-visible{outline:3px solid var(--htcw-blue);outline-offset:2px;background:var(--htcw-bg);color:var(--htcw-ink)}
+#htcw .htcw-qr-card:disabled{background:var(--htcw-bg);border-color:var(--htcw-line);border-left-color:var(--htcw-line)}
+#htcw .htcw-qr-card:disabled .htcw-qr-title,#htcw .htcw-qr-card:disabled .htcw-qr-desc{color:#6f8794}
+@media (max-width:419px){#htcw .htcw-qr-cards{grid-template-columns:minmax(0,1fr)}}
 #htcw .htcw-retry{align-self:flex-start;display:flex;flex-direction:column;align-items:flex-start;gap:8px}
 
 /* summary card */
@@ -123,6 +137,12 @@
 #htcw .htcw-sum-row dd{margin:0;font-weight:500;overflow-wrap:anywhere}
 #htcw .htcw-sum-row dd.htcw-muted{color:#5a7686;font-weight:300}
 #htcw .htcw-sum .htcw-grid{margin-top:2px}
+#htcw .htcw-sum-missing{align-items:start}
+#htcw .htcw-sum-missing dt label{display:block;margin:0;padding:0;font:400 13px/1.4 Poppins,Arial,sans-serif;color:#43606f}
+#htcw .htcw-missing-tag{display:inline-block;margin:0 0 4px;padding:0 6px;background:#fff1f1;border-left:3px solid var(--htcw-err);color:var(--htcw-err);font:600 12px/1.6 Poppins,Arial,sans-serif}
+#htcw .htcw-sum-missing input,#htcw .htcw-sum-missing select{display:block;width:100%;height:36px;margin:0;padding:6px 9px;background:#fff;color:var(--htcw-ink);border:1px solid var(--htcw-line);border-radius:2px;font:400 14px/1.4 Poppins,Arial,sans-serif;box-shadow:none}
+#htcw .htcw-sum-missing input:focus,#htcw .htcw-sum-missing select:focus{outline:2px solid var(--htcw-blue);outline-offset:1px;border-color:var(--htcw-blue)}
+#htcw .htcw-sum-missing [aria-invalid="true"]{border-color:var(--htcw-err);background:#fff8f8}
 #htcw .htcw-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 #htcw .htcw-btn{
   display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:9px 18px;margin:0;border:1px solid var(--htcw-yellow);border-radius:1px;
@@ -130,7 +150,8 @@
 }
 #htcw .htcw-btn:hover{background:var(--htcw-blue);border-color:var(--htcw-blue);color:var(--htcw-yellow)}
 #htcw .htcw-btn:focus-visible{outline:2px solid var(--htcw-blue);outline-offset:2px}
-#htcw .htcw-btn:disabled{opacity:.6;cursor:progress}
+#htcw .htcw-btn:disabled{opacity:.6;cursor:not-allowed}
+#htcw .htcw-btn:disabled:hover{background:var(--htcw-yellow);border-color:var(--htcw-yellow);color:var(--htcw-btn-ink)}
 #htcw .htcw-ghost{background:transparent;border-color:var(--htcw-line);color:var(--htcw-blue)}
 #htcw .htcw-ghost:hover{background:var(--htcw-bg);border-color:var(--htcw-blue);color:var(--htcw-blue)}
 
@@ -180,7 +201,7 @@
   #htcw.htcw-open .htcw-launcher,#htcw.htcw-open .htcw-tip{display:none}
   #htcw .htcw-menu{top:62px}
   #htcw .htcw-log{padding:14px}
-  #htcw .htcw-input,#htcw .htcw-field input,#htcw .htcw-field select,#htcw .htcw-field textarea{font-size:16px} /* no iOS zoom */
+  #htcw .htcw-input,#htcw .htcw-field input,#htcw .htcw-field select,#htcw .htcw-field textarea,#htcw .htcw-sum-missing input,#htcw .htcw-sum-missing select{font-size:16px} /* no iOS zoom */
   #htcw .htcw-composer{padding-bottom:max(12px,env(safe-area-inset-bottom))}
   #htcw .htcw-grid{grid-template-columns:1fr}
 }
