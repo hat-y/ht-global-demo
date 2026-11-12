@@ -495,19 +495,133 @@ const OPTION_HINTS = {
 };
 const fallbackQuickReplies = (name) => (ENUMS[name] || []).map((v) => (OPTION_HINTS[v] ? { label: v, value: v, description: OPTION_HINTS[v] } : { label: v, value: v }));
 
+// S27: free-text fields that belong together are asked as one natural question.
+// Option fields (board type, single up/array, layers, classification ...) always stay alone so their buttons match.
+const GROUPS = [['name', 'company'], ['email', 'phone'], ['unitOfMeasure', 'width', 'length']];
+const UNIT_RE = '(mm|millimet(?:er|re)s?|inches|inch|in)';
+const NUM_RE = '(\\d+(?:[.,]\\d+)?)';
+function toUnit(u) {
+  if (!u) return undefined;
+  return /^(mm|millimet)/i.test(u) ? 'mm' : 'inches';
+}
+const num2 = (v) => Number(String(v).replace(',', '.'));
+// "100x80mm", "4 by 3 inches", "100 mm x 80 mm", `4"x3"`, "60 × 40 mm", "4 x 3": width, length and the unit when it is given.
+function parseSize(text) {
+  const t = String(text).toLowerCase().replace(/[\u00d7\u2715\u2a2f]/g, ' x ').replace(/"|\u2033|''/g, ' in ').replace(/\s+/g, ' ');
+  const m = t.match(new RegExp(`${NUM_RE}\\s*${UNIT_RE}?\\s*(?:x|by|\\*)\\s*${NUM_RE}\\s*${UNIT_RE}?(?![a-z])`));
+  if (!m) return null;
+  const out = { width: num2(m[1]), length: num2(m[3]) };
+  const unit = toUnit(m[4]) || toUnit(m[2]);
+  if (unit) out.unitOfMeasure = unit;
+  return out;
+}
+function parseNameCompany(text, asked) {
+  let t = String(text).trim().replace(/^(?:hi|hello|hey)\b[\s,!.]*/i, '').replace(/^(?:i\s*['\u2019]?\s*m|i am|my name is|this is|it\s*['\u2019]?s|name is)\s+/i, '').trim();
+  const parts = t.split(/\s*,\s*|\s+(?:from|at|with|of)\s+|\s+[-\u2013\u2014]\s+/i).map((x) => x.trim()).filter(Boolean);
+  const out = {};
+  if (asked.includes('name') && parts[0]) out.name = parts[0];
+  if (asked.includes('company')) {
+    const co = asked.includes('name') ? parts.slice(1).join(' ') : parts.join(' ');
+    if (co) out.company = co;
+  }
+  return out;
+}
+function parseEmailPhone(text, asked) {
+  const out = {};
+  let rest = String(text);
+  const em = rest.match(/[^\s@<>()",;]+@[^\s@<>()",;]+\.[A-Za-z]{2,}/);
+  if (em) { if (asked.includes('email')) out.email = em[0]; rest = rest.replace(em[0], ' '); }
+  const ph = rest.match(/\+?\d[\d\s().\-]{5,}\d/);
+  if (ph && asked.includes('phone') && ph[0].replace(/\D/g, '').length >= 7) out.phone = ph[0].trim();
+  return out;
+}
+function parseSizeAnswer(text, asked, merged) {
+  const out = {};
+  const both = parseSize(text);
+  if (both) {
+    if (asked.includes('width')) out.width = both.width;
+    if (asked.includes('length')) out.length = both.length;
+    if (asked.includes('unitOfMeasure') && both.unitOfMeasure) out.unitOfMeasure = both.unitOfMeasure;
+    return out;
+  }
+  const t = String(text).trim().toLowerCase().replace(/[.!]+$/, '');
+  const bare = t.match(new RegExp(`^${NUM_RE}\\s*${UNIT_RE}?$`));
+  if (bare) {
+    const n = num2(bare[1]);
+    if (asked.includes('width') && merged.width === undefined) out.width = n;
+    else if (asked.includes('length') && merged.length === undefined) out.length = n;
+    const u = toUnit(bare[2]);
+    if (u && asked.includes('unitOfMeasure')) out.unitOfMeasure = u;
+    return out;
+  }
+  if (asked.includes('unitOfMeasure')) {
+    const u = matchEnum('unitOfMeasure', t) || (/^(?:in|inch|inches|mm|millimet\w*)$/.test(t) ? toUnit(t) : undefined);
+    if (u) out.unitOfMeasure = u;
+  }
+  return out;
+}
+const SIZE_EXAMPLE = 'For example 100 \u00d7 80 mm or 4 \u00d7 3 in.';
+// The next question: {text, fields}. fields are the group members still missing (and not deferred); a deferred next field is asked alone.
+function promptFor(next, merged, deferred = []) {
+  const group = GROUPS.find((g) => g.includes(next));
+  let fields = [next];
+  if (group && !deferred.includes(next)) fields = group.filter((k) => merged[k] === undefined && !deferred.includes(k));
+  if (!fields.length) fields = [next];
+  const has = (k) => fields.includes(k);
+  let text;
+  if (has('name') && has('company')) text = 'What\u2019s your name and company?';
+  else if (has('company') && fields.length === 1 && group && merged.name !== undefined) text = 'And your company?';
+  else if (has('email') && has('phone')) text = 'What\u2019s the best email and phone number to reach you?';
+  else if (has('phone') && fields.length === 1 && merged.email !== undefined) text = 'And the best phone number to reach you?';
+  else if (has('unitOfMeasure') && has('width') && has('length')) text = `What\u2019s the board size? ${SIZE_EXAMPLE}`;
+  else if (has('unitOfMeasure') && has('width')) text = 'What\u2019s the board width, and is it in mm or inches?';
+  else if (has('unitOfMeasure') && has('length')) text = 'What\u2019s the board length, and is it in mm or inches?';
+  else if (has('unitOfMeasure') && fields.length === 1) text = merged.width !== undefined || merged.length !== undefined ? 'Is that in mm or inches?' : FALLBACK_PROMPTS.unitOfMeasure;
+  else if (has('width') && has('length')) text = `What\u2019s the board size in ${merged.unitOfMeasure}? For example ${merged.unitOfMeasure === 'inches' ? '4 \u00d7 3' : '100 \u00d7 80'}.`;
+  else text = FALLBACK_PROMPTS[next];
+  return { text, fields };
+}
+function parseGroupedAnswer(fieldsAsked, message, merged) {
+  if (fieldsAsked.length === 1) {
+    const f = fieldsAsked[0];
+    const v = intakeField(f, message);
+    if (v !== undefined) return { [f]: v };
+    if (f === 'width' || f === 'length' || f === 'unitOfMeasure') return parseSizeAnswer(message, fieldsAsked, merged);
+    return {};
+  }
+  let raw;
+  if (fieldsAsked.includes('name')) raw = parseNameCompany(message, fieldsAsked);
+  else if (fieldsAsked.includes('email')) raw = parseEmailPhone(message, fieldsAsked);
+  else raw = parseSizeAnswer(message, fieldsAsked, merged);
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const val = intakeField(k, v);
+    if (val !== undefined) out[k] = val;
+  }
+  return out;
+}
+const firstWord = (s) => String(s).trim().split(/\s+/)[0];
+
 // Deterministic reply used when the AI agent is unavailable: never a dead end. If the last assistant
-// turn was this fallback's own question, the customer's answer is parsed for that field.
+// turn was this fallback's own question, the customer's answer is parsed for the field(s) it asked about.
 function intakeFallback({ history, fields, message, deferred = [] }) {
   const merged = { ...fields };
   const target = missingFields(merged, deferred)[0];
   let prefix = '';
   if (target) {
     const lastAssistant = [...history].reverse().find((t) => t.role === 'assistant');
-    const asked = lastAssistant && lastAssistant.text.endsWith(FALLBACK_PROMPTS[target]);
+    const prompt = promptFor(target, merged, deferred);
+    const asked = lastAssistant && lastAssistant.text.endsWith(prompt.text);
     if (message != null && asked) {
-      const v = intakeField(target, message);
-      if (v !== undefined) merged[target] = v;
-      else prefix = 'Sorry, I didn\u2019t catch that. ';
+      const got = parseGroupedAnswer(prompt.fields, message, merged);
+      Object.assign(merged, got);
+      const keys = Object.keys(got);
+      if (!keys.length) prefix = 'Sorry, I didn\u2019t catch that. ';
+      else if (prompt.fields.length > 1) {
+        if (got.name !== undefined) prefix = `Thanks, ${firstWord(got.name)}. `;
+        else if (got.width !== undefined && got.length !== undefined) prefix = `Got it, ${got.width} \u00d7 ${got.length}. `;
+        else prefix = 'Got it. ';
+      }
     } else if (message != null) {
       prefix = 'Sorry, I had a hiccup. ';
     } else if (!history.length) {
@@ -516,7 +630,9 @@ function intakeFallback({ history, fields, message, deferred = [] }) {
   }
   const next = missingFields(merged, deferred)[0];
   if (!next) return { reply: FALLBACK_COMPLETE, quickReplies: [], fieldUpdates: merged, asking: null };
-  return { reply: prefix + FALLBACK_PROMPTS[next], quickReplies: fallbackQuickReplies(next), fieldUpdates: merged, asking: next };
+  const q = promptFor(next, merged, deferred);
+  const asking = q.fields.includes('width') ? 'width' : q.fields[0];
+  return { reply: prefix + q.text, quickReplies: q.fields.length === 1 ? fallbackQuickReplies(q.fields[0]) : [], fieldUpdates: merged, asking };
 }
 
 const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;

@@ -69,6 +69,20 @@ const deferred = NAMES.filter(function (k) { return rawDef.indexOf(k) >= 0 && fi
 const missAll = NAMES.filter(function (k) { return fields[k] === undefined; });
 const missing = missAll.filter(function (k) { return deferred.indexOf(k) < 0; }).concat(missAll.filter(function (k) { return deferred.indexOf(k) >= 0; }));
 const pending = missAll.filter(function (k) { return deferred.indexOf(k) < 0; });
+// S27: free-text fields that belong together are asked together; the label names the pending members only
+const GROUPS = [['name', 'company'], ['email', 'phone'], ['unitOfMeasure', 'width', 'length']];
+const nextF = pending.length ? pending[0] : null;
+let groupLabel = '';
+if (nextF) {
+  const gr = GROUPS.filter(function (g) { return g.indexOf(nextF) >= 0; })[0];
+  const mem = gr ? gr.filter(function (k) { return pending.indexOf(k) >= 0; }) : [];
+  if (mem.length > 1) {
+    if (mem.indexOf('name') >= 0) groupLabel = 'name and company (together)';
+    else if (mem.indexOf('email') >= 0) groupLabel = 'email and phone (together)';
+    else if (mem.indexOf('unitOfMeasure') >= 0) groupLabel = 'board size with its unit (together)';
+    else groupLabel = 'board size, width and length (together)';
+  }
+}
 const missingOpt = OPTIONAL.filter(function (k) { return fields[k] === undefined; });
 
 const sistema = [
@@ -78,16 +92,16 @@ const sistema = [
   'Fields already captured (never ask for these again): ' + JSON.stringify(fields),
   'Required fields still missing, in the order to ask them: ' + (missing.length ? missing.join(', ') : 'none (all required fields are in)') + '.',
   'Fields the customer postponed (deferred): ' + (deferred.length ? deferred.join(', ') : 'none') + '. They are at the end of the missing order.',
-  'Next field to ask, ignoring any deferred one: ' + (pending.length ? pending[0] : (deferred.length ? 'none left except the deferred ones' : 'none')) + '.',
+  'Next field to ask, ignoring any deferred one: ' + (pending.length ? (groupLabel || pending[0]) : (deferred.length ? 'none left except the deferred ones' : 'none')) + '.',
   'Optional fields not captured yet: ' + (missingOpt.length ? missingOpt.join(', ') : 'none') + '.',
   'Files already attached in the chat (held until the customer confirms the quote): ' + (heldFiles.length ? heldFiles.join(', ') : 'none') + '.',
   'Summary already shown to the customer in this conversation: ' + (summaryShown ? 'yes' : 'no') + '.',
   'RULES:',
-  '1. ' + (message === null ? 'This is the FIRST OPEN of the chat (no customer message yet): greet the customer, introduce yourself as HT Global\\'s quote assistant, and ask for their name. Nothing else.' : 'Respond to the customer\\'s latest message.'),
-  '2. ONE TOPIC PER MESSAGE: ask about a single field (width and length together are the only allowed pair). Never add a second question to a message. Briefly acknowledge what the customer just said.',
-  '3. Never ask again for a field already captured. If the customer gives several values at once (for example "4 layers, 100x80 mm, 500 pcs"), capture all of them in fieldUpdates. Do not ask for a unit again when it is stated inside a dimension such as "100x80 mm".',
+  '1. ' + (message === null ? 'This is the FIRST OPEN of the chat (no customer message yet): greet the customer, introduce yourself as HT Global\\'s quote assistant, and ask for their name and company in one question ("What\\'s your name and company?"). Nothing else.' : 'Respond to the customer\\'s latest message.'),
+  '2. GROUPED QUESTIONS: ask ONE natural question per message, and only these three groups may combine two or three fields: (a) name and company: "What\\'s your name and company?"; (b) email and phone: "What\\'s the best email and phone number to reach you?"; (c) board size with its unit: "What\\'s the board size? For example 100 x 80 mm or 4 x 3 in." (captures width, length and unitOfMeasure together; set askField "width", so no buttons show). Ask a group together ONLY when the "Next field to ask" line above says (together). When the customer answers only part of a group, ask ONLY for the missing part ("Thanks, Sam. And your company?"). If the size came without a unit ("4 x 3"), ask the unit alone with askField "unitOfMeasure" (the website shows [mm] [inches]); never ask the unit again when it is inside the size ("100x80mm", "4 by 3 inches", "60 x 40 mm"). When the Next field to ask line says "board size with its unit (together)", ask the size question: NEVER ask for the unit alone before the size is known. Every other field (boardType, singleUpOrArray, layers, quantity, itarClassification, leadTimeDays, comment, files) and any deferred field is asked ALONE, so its buttons always match. Briefly acknowledge what the customer just said. Never add an extra question to a message.',
+  '3. Never ask again for a field already captured. If the customer gives several values at once (for example "4 layers, 100x80 mm, 500 pcs"), capture all of them in fieldUpdates. Do not ask for a unit again when it is stated inside a dimension such as "100x80 mm" or "4 by 3 inches".',
   '4. If a value is ambiguous or invalid, ask once to clarify and do not put it in fieldUpdates.',
-  '5. QUESTIONS AND UNSURE CUSTOMERS: when the customer asks a question or says they are unsure (for example "what is it for?", "what type?", "which one?", "I am not sure"), first INTERPRET what they actually ask, relative to the field you just asked about (see the last Assistant message in the conversation): "what type", "what is it for", "which one", "what does that mean" all refer to THAT field. Then ANSWER it genuinely in 2-4 short, friendly sentences: say what it is and why it matters. Relate it to what is already known (quantity, board size, board type, layers) and, where reasonable, offer the typical choice as a SUGGESTION, for example "With 500 boards of 100 x 80 mm going to automated assembly, an array is common; for hand assembly or prototypes, single up is simpler." Then ask which one fits and set askField to that field, so the website shows that field\\'s option cards under your message (boardType, singleUpOrArray, itarClassification, unitOfMeasure, layers). Do NOT just repeat or list the card descriptions (the cards already show them) and never write "each option has a short explanation" as your whole answer: give real reasoning. Never present a suggestion as HT Global policy or a requirement (say "typically", "common", "a good fit", "I would suggest"), and for classification always say the customer should confirm with their own compliance team. Never give prices or lead times. Keep ONE topic per message: answer, then ask only that field. If the same message also states form values, capture them in fieldUpdates.',
+  '5. QUESTIONS AND UNSURE CUSTOMERS: when the customer asks a question or says they are unsure (for example "what is it for?", "what type?", "which one?", "I am not sure"), first INTERPRET what they actually ask, relative to the field you just asked about (see the last Assistant message in the conversation): "what type", "what is it for", "which one", "what does that mean" all refer to THAT field. Then ANSWER it genuinely in 2-4 short, friendly sentences: say what it is and why it matters. Relate it to what is already known (quantity, board size, board type, layers) and, where reasonable, offer the typical choice as a SUGGESTION, for example "With 500 boards of 100 x 80 mm going to automated assembly, an array is common; for hand assembly or prototypes, single up is simpler." Then ask which one fits and set askField to that field, so the website shows that field\\'s option cards under your message (boardType, singleUpOrArray, itarClassification, unitOfMeasure, layers). Do NOT just repeat or list the card descriptions (the cards already show them) and never write "each option has a short explanation" as your whole answer: give real reasoning. Never present a suggestion as HT Global policy or a requirement (say "typically", "common", "a good fit", "I would suggest"), and for classification always say the customer should confirm with their own compliance team. Never give prices or lead times. Keep ONE question per message: answer, then ask only that field (or that group). If the same message also states form values, capture them in fieldUpdates.',
   '5a. UNCLEAR INPUT: if the customer says something unclear such as "I do not understand", "what?" or "help", do not reply with a generic line. Explain the current question briefly in plain words (for the unit: "mm means millimeters, inches means 1 inch = 25.4 mm; just pick the unit your drawings use"; for layers: the number of copper layers, 2 is common for simple boards, 4 or more for denser ones) and ask it again with askField set, so the buttons show.',
   '5b. DEFERRED FIELDS: if the customer says they cannot or will not give a required field now (for example "I do not remember my email", "I will send the phone later"), acknowledge kindly in a few words ("No worries, you can add it at the end"), put that field name in the "deferred" array, and continue with the next field to ask. Never ask a deferred field while other fields are missing. Ask it again ONLY ONCE, right before finishing: after all other required fields AND after the optional lead time question (never before the lead time question), with a message like "Last thing: what email should we send the quote to?" (askField = that field). If the customer postpones it again, or has just postponed the last remaining field, do not ask again: say they can add it in the summary, and keep it in "deferred".',
   '6. OPTIONAL FIELDS, in this order, ONE per message, only after every required field is in (deferred ones re-asked first): (a) leadTimeDays: ask the target lead time, say it is optional, askField "leadTimeDays" (the website shows the buttons including "No rush, skip"). (b) comment: after the lead time is answered or skipped, ask "Anything else you would like to add for our team?", askField "comment" (buttons "Nothing else" / "Add a note"). If the customer picks "Add a note", ask what they would like to add, keeping askField "comment". If the customer skips or declines one ("No rush, skip", "Nothing else"), treat it as settled and never ask it again. (c) files step: after the comment is settled, and only if no files are attached yet, ask exactly: "Do you have a fabrication drawing or Gerber files? You can attach them now (optional)." with askField "files" (the website shows the buttons [Attach files] and [No files]). If the customer answers "No files", treat it as settled and never ask it again.',
@@ -364,7 +378,7 @@ const askRaw = (parsed && typeof parsed.askField === 'string') ? parsed.askField
 const ask = (askRaw && ASKABLE.indexOf(askRaw) >= 0) ? askRaw : '';
 const topic = (askRaw && ASKABLE.indexOf(askRaw) >= 0 && BTN[askRaw]) ? askRaw : '';
 const ASK = {
-  name: "Hi! I'm HT Global's quote assistant. What's your name?",
+  name: "Hi! I'm HT Global's quote assistant. What's your name and company?",
   company: 'Thanks! Which company are you with?',
   email: "What's the best email to reach you at?",
   phone: "And a phone number we can reach you at?",
@@ -377,6 +391,23 @@ const ASK = {
   quantity: 'How many boards do you need?',
   itarClassification: 'Is this design commercial, or ITAR/EAR controlled?'
 };
+// S27: group-aware question for the deterministic paths: name+company, email+phone, size (unit alone only when the size is known)
+const askFor = function (nx) {
+  const pend = function (k) { return isMissing(k) && deferred.indexOf(k) < 0; };
+  if (deferred.indexOf(nx) >= 0) return { text: ASK[nx], ask: nx, buttons: BTN[nx] || [] };
+  if ((nx === 'name' || nx === 'company') && pend('name') && pend('company')) return { text: ASK.name, ask: 'name', buttons: [] };
+  if (nx === 'company' || nx === 'name') return { text: ASK[nx], ask: nx, buttons: [] };
+  if ((nx === 'email' || nx === 'phone') && pend('email') && pend('phone')) return { text: "What's the best email and phone number to reach you?", ask: 'email', buttons: [] };
+  if (nx === 'unitOfMeasure' || nx === 'width' || nx === 'length') {
+    const w = pend('width'), l = pend('length'), un = pend('unitOfMeasure');
+    if (un && w && l) return { text: "What's the board size? For example 100 \\u00d7 80 mm or 4 \\u00d7 3 in.", ask: 'width', buttons: [] };
+    if (un && !w && !l) return { text: 'Is that in mm or inches?', ask: 'unitOfMeasure', buttons: BTN.unitOfMeasure };
+    if (un) return { text: w ? "What's the board width, and is it in mm or inches?" : "What's the board length, and is it in mm or inches?", ask: w ? 'width' : 'length', buttons: [] };
+    if (w && l) return { text: "What's the board size in " + merged.unitOfMeasure + '? For example ' + (merged.unitOfMeasure === 'inches' ? '4 \\u00d7 3' : '100 \\u00d7 80') + '.', ask: 'width', buttons: [] };
+  }
+  return { text: ASK[nx], ask: nx, buttons: BTN[nx] || [] };
+};
+const sizeOpen = isMissing('width') || isMissing('length');
 let quickReplies = [];
 if (usable && topic) {
   quickReplies = BTN[topic];
@@ -392,23 +423,31 @@ if (usable && topic) {
   }
 }
 if (!usable) {
-  reply = next ? ('Thanks, got it! ' + ASK[next]) : 'Thanks, I have everything I need. Is there anything else you would like to add, or would you like to review the summary?';
+  reply = next ? ('Thanks, got it! ' + askFor(next).text) : 'Thanks, I have everything I need. Is there anything else you would like to add, or would you like to review the summary?';
   if (!next) quickReplies = BTN.comment;
-  else quickReplies = BTN[next] || [];
-} else if (quickReplies.length === 0 && !topic && next && BTN[next] && next !== 'leadTimeDays') {
+  else quickReplies = askFor(next).buttons;
+} else if (quickReplies.length === 0 && !topic && next && BTN[next] && next !== 'leadTimeDays' && !(next === 'unitOfMeasure' && sizeOpen)) {
   // The LLM forgot the buttons: add them only when its reply is clearly asking for the first missing field.
   const KW = { boardType: /board type|type of (board|pcb)|what kind/i, singleUpOrArray: /single.?up|array|panel/i, unitOfMeasure: /\\bmm\\b|inch|millimet|unit/i, itarClassification: /itar|\\bear\\b|commercial/i, layers: /layer/i };
   if (reply.indexOf('?') >= 0 && KW[next].test(reply)) quickReplies = BTN[next];
 }
-let askOut = usable ? (ask || null) : (next || null);
+let askOut = usable ? (ask || null) : (next ? askFor(next).ask : null);
+// S27 (e): the LLM asked for the unit alone while the whole size is still unknown: ask the size question instead (not when the customer asked a question)
+if (usable && topic === 'unitOfMeasure' && sizeOpen && merged.width === undefined && merged.length === undefined && !/\\?/.test(String(ent.message || '')) && !/size|width|length|\\u00d7|\\d\\s*x\\s*\\d/i.test(reply) && isMissing('unitOfMeasure') && deferred.indexOf('unitOfMeasure') < 0) {
+  const qs = askFor('unitOfMeasure');
+  reply = 'Thanks! ' + qs.text; quickReplies = []; askOut = 'width';
+}
+// S27 (a): the unit buttons never go under a reply that asks for the size while width or length is still missing
+if (usable && topic === 'unitOfMeasure' && sizeOpen && /size|width|length|\\u00d7|\\d\\s*x\\s*\\d/i.test(reply)) { quickReplies = []; askOut = 'width'; }
 const OPTQ = { leadTimeDays: 'Do you have a target lead time? It is optional, so feel free to skip it.', comment: 'Anything else you would like to add for our team? It is optional.', files: 'Do you have a fabrication drawing or Gerber files? You can attach them now (optional).' };
 if (netHit) {
   // the LLM did not capture the ordinal pick: confirm it and move on deterministically
   const val = netHit === 'layers' ? (updates.layers + ' layers') : (updates.boardType || updates.singleUpOrArray || updates.itarClassification || updates.unitOfMeasure || netHit);
   const nx = order.filter(function (k) { return isMissing(k) && updates[k] === undefined; })[0] || null;
-  reply = 'Got it, ' + val + '. ' + (nx ? ASK[nx] : '');
-  quickReplies = nx ? (BTN[nx] || []) : [];
-  askOut = nx;
+  const q = nx ? askFor(nx) : null;
+  reply = 'Got it, ' + val + '. ' + (q ? q.text : '');
+  quickReplies = q ? q.buttons : [];
+  askOut = q ? q.ask : null;
   if (!nx) { reply = 'Got it, ' + val + '.'; }
 }
 if (usable && !netHit) {
