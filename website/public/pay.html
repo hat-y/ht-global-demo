@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Accept your quote · HT Global Circuits</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Montserrat:wght@600;700&display=swap">
+<link rel="stylesheet" href="/pay.css">
+</head>
+<body>
+<header class="bar"><span class="brand">HT GLOBAL CIRCUITS</span><span class="secure">🔒 Secure checkout · demo</span></header>
+<main class="wrap">
+  <section class="card" id="checkout">
+    <p class="kicker">Quote <span id="q">—</span></p>
+    <h1>Accept your quote and pay</h1>
+    <p class="muted">Choose the option you want. You can change it before paying.</p>
+    <div class="options" id="options"></div>
+    <div class="summary">
+      <div><span>Boards</span><strong id="s-boards">—</strong></div>
+      <div><span>NRE (one-time)</span><strong id="s-nre">—</strong></div>
+      <div><span>Lead time</span><strong id="s-lead">—</strong></div>
+      <div class="total"><span>Total to pay</span><strong id="s-total">—</strong></div>
+    </div>
+    <form id="pay" autocomplete="off">
+      <label>Name on card<input id="name" value="Laura Mendez" required></label>
+      <label>Card number<input id="card" value="4242 4242 4242 4242" inputmode="numeric" required></label>
+      <div class="row">
+        <label>Expiry<input value="12 / 29" required></label>
+        <label>CVC<input value="123" inputmode="numeric" required></label>
+      </div>
+      <button type="submit" id="paybtn">Pay</button>
+      <p class="fine">Demo checkout: no real card is charged.</p>
+    </form>
+  </section>
+  <section class="card done" id="done" hidden>
+    <div class="check">✓</div>
+    <h1>Payment received</h1>
+    <p>Thank you! Your order for <strong id="d-desc">—</strong> is confirmed.</p>
+    <p class="muted">Amount paid: <strong id="d-total">—</strong> · Reference <strong id="d-ref">—</strong></p>
+    <p class="muted">We start production now and will email you the tracking details.</p>
+    <a class="back" href="/">Back to HT Global Circuits</a>
+  </section>
+</main>
+<script src="/pay.js"></script>
+</body>
+</html>
